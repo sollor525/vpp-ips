@@ -25,6 +25,9 @@ if(NOT DEFINED CMAKE_INSTALL_LIBDIR AND EXISTS "/etc/debian_version")
   set(CMAKE_INSTALL_LIBDIR "lib/${CMAKE_LIBRARY_ARCHITECTURE}")
 endif()
 
+# In order to generate compile_commands.json
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 include(CheckCCompilerFlag)
 include(CheckIPOSupported)
 include(GNUInstallDirs)

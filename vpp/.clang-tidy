@@ -1,8 +1,10 @@
-Checks: "-*,\
-misc-*,\
-bugprone-*,\
--bugprone-reserved-identifier,\
--performance-*,\
-clang-analyzer-*,\
--clang-analyzer-valist.Uninitialized,\
-"
+Checks: >
+  -*,
+  misc-*,
+  bugprone-*,
+  -bugprone-reserved-identifier,
+  -bugprone-easily-swappable-parameters,
+  performance-*,
+  clang-analyzer-*,
+  -clang-analyzer-valist.Uninitialized,
+  -misc-unused-parameters

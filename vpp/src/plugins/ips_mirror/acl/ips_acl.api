@@ -1,0 +1,114 @@
+/* Hey Emacs use -*- mode: C -*- */
+/*
+ * ips_acl.api - VPP IPS Plugin ACL Integration API
+ *
+ * Copyright (c) 2024 VPP IPS Project
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ */
+
+autoreply define ips_acl_add_rule
+{
+  u32 client_index;
+  u32 context;
+  u8 is_ipv6;
+  vl_api_ip4_address_t src_ip4;
+  vl_api_ip6_address_t src_ip6;
+  u8 src_prefixlen;
+  vl_api_ip4_address_t dst_ip4;
+  vl_api_ip6_address_t dst_ip6;
+  u8 dst_prefixlen;
+  u8 protocol;
+  u16 src_port_start;
+  u16 src_port_end;
+  u16 dst_port_start;
+  u16 dst_port_end;
+  u8 tcp_flags_mask;
+  u8 tcp_flags_value;
+  u32 action;
+};
+
+define ips_acl_add_rule_reply
+{
+  u32 context;
+  i32 retval;
+  u32 rule_id;
+};
+
+autoreply define ips_acl_remove_rule
+{
+  u32 client_index;
+  u32 context;
+  u32 rule_id;
+};
+
+define ips_acl_remove_rule_reply
+{
+  u32 context;
+  i32 retval;
+};
+
+autoreply define ips_acl_set_rule_enabled
+{
+  u32 client_index;
+  u32 context;
+  u32 rule_id;
+  u8 enabled;
+};
+
+define ips_acl_set_rule_enabled_reply
+{
+  u32 context;
+  i32 retval;
+};
+
+autoreply define ips_acl_get_stats
+{
+  u32 client_index;
+  u32 context;
+  u32 thread_index;
+};
+
+define ips_acl_get_stats_reply
+{
+  u32 context;
+  i32 retval;
+  u64 total_packets_checked;
+  u64 packets_denied;
+  u64 packets_reset;
+  u64 packets_permit;
+  u64 sessions_blocked;
+  u64 acl_errors;
+};
+
+autoreply define ips_acl_reset_stats
+{
+  u32 client_index;
+  u32 context;
+  u32 thread_index;
+};
+
+define ips_acl_reset_stats_reply
+{
+  u32 context;
+  i32 retval;
+};
+
+autoreply define ips_acl_send_reset
+{
+  u32 client_index;
+  u32 context;
+  u32 session_index;
+  u8 is_reply;
+};
+
+define ips_acl_send_reset_reply
+{
+  u32 context;
+  i32 retval;
+};
+
+/*
+ * Local Variables:
+ * eval: (c-set-style "gnu")
+ * End:
+ */
