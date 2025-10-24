@@ -42,6 +42,9 @@
 #define IPS_TIMER_HANDLE_SESSION_INDEX(handle)  ((handle) & 0x3FFFFFFF)
 #define IPS_TIMER_HANDLE_TIMER_ID(handle)       (((handle) >> 30) & 0x3)
 
+/* Timer handle invalid value - following TCP pattern */
+#define IPS_TIMER_HANDLE_INVALID              ((u32) ~0)
+
 /* Hybrid aging configuration */
 typedef struct ips_session_timer_config_
 {
@@ -226,6 +229,11 @@ void ips_session_timer_expire_callback(u32 *expired_timers);
  * @brief Timer process node function
  */
 uword ips_session_timer_process(vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f);
+
+/**
+ * @brief Timer process node declaration
+ */
+extern vlib_node_registration_t ips_session_timer_process_node;
 
 /**
  * @brief Check timer wheel health

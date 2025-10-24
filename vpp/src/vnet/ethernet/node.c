@@ -224,9 +224,10 @@ identify_subint (ethernet_main_t * em,
       // Perform L3 my-mac filter
       // A unicast packet arriving on an L3 interface must have a dmac
       // matching the interface mac. If interface has STATUS_L3 bit set
-      // mac filter is already done.
+      // or ACCEPT_ALL flag set, mac filter is skipped.
       if ((!*is_l2) && ei &&
-	  (!(ei->flags & ETHERNET_INTERFACE_FLAG_STATUS_L3)))
+	  (!(ei->flags & ETHERNET_INTERFACE_FLAG_STATUS_L3)) &&
+	  (!(ei->flags & ETHERNET_INTERFACE_FLAG_ACCEPT_ALL)))
 	{
 	  u64 dmacs[2];
 	  u8 dmacs_bad[2];
@@ -601,8 +602,13 @@ eth_input_tag_lookup (vlib_main_t * vm, vnet_main_t * vnm,
 
   if (check_dmac && l->adv > 0 && dmac_bad)
     {
-      l->err = ETHERNET_ERROR_L3_MAC_MISMATCH;
-      next[0] = ETHERNET_INPUT_NEXT_PUNT;
+      /* Check if interface has ACCEPT_ALL flag set (for mirror traffic) */
+      ethernet_interface_t *ei = ethernet_get_interface (&ethernet_main, hi->hw_if_index);
+      if (!(ei && (ei->flags & ETHERNET_INTERFACE_FLAG_ACCEPT_ALL)))
+      {
+        l->err = ETHERNET_ERROR_L3_MAC_MISMATCH;
+        next[0] = ETHERNET_INPUT_NEXT_PUNT;
+      }
     }
   else
     next[0] = l->next;
@@ -693,6 +699,14 @@ ethernet_input_inline_dmac_check (vnet_hw_interface_t * hi,
 				  u32 n_packets, ethernet_interface_t * ei,
 				  u8 have_sec_dmac)
 {
+  /* Skip MAC address check if ACCEPT_ALL flag is set (for mirror traffic) */
+  if (ei && (ei->flags & ETHERNET_INTERFACE_FLAG_ACCEPT_ALL))
+  {
+    dmacs_bad[0] = 0;
+    dmacs_bad[1] = 0;
+    return;
+  }
+
   u64 hwaddr = ei->address.as_u64;
   u8 bad = 0;
 

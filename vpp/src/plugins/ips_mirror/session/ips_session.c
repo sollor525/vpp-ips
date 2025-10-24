@@ -386,6 +386,15 @@ ips_session_lookup_or_create_ipv4 (u32 thread_index,
     ips_session_set_bihash_key4 (&kv, &reverse_key);
     if (clib_bihash_search_16_8 (&ptd->ipv4_session_hash, &kv, &kv) == 0)
     {
+        /* 安全检查：验证会话池索引是否有效 */
+        if (PREDICT_FALSE (kv.value >= pool_len (ptd->session_pool) ||
+                         pool_is_free_index (ptd->session_pool, kv.value)))
+        {
+            /* 哈希表指向已释放的会话，需要清理哈希表条目 */
+            clib_bihash_add_del_16_8 (&ptd->ipv4_session_hash, &kv, 0 /* is_add */);
+            goto create_new_session;
+        }
+
         session = pool_elt_at_index (ptd->session_pool, kv.value);
         session->last_packet_time = now;
 
@@ -469,6 +478,7 @@ ips_session_lookup_or_create_ipv4 (u32 thread_index,
     }
 
     /* 会话不存在，创建新会话 */
+create_new_session:
     /* 只有 SYN/SYNACK 报文才能创建新会话 */
     if (!(tcp->flags & TCP_FLAG_SYN))
     {
@@ -610,6 +620,15 @@ ips_session_lookup_or_create_ipv6 (u32 thread_index,
     ips_session_set_bihash_key6 (&kv, &key);
     if (clib_bihash_search_48_8 (&ptd->ipv6_session_hash, &kv, &kv) == 0)
     {
+        /* 安全检查：验证会话池索引是否有效 */
+        if (PREDICT_FALSE (kv.value >= pool_len (ptd->session_pool) ||
+                         pool_is_free_index (ptd->session_pool, kv.value)))
+        {
+            /* 哈希表指向已释放的会话，需要清理哈希表条目 */
+            clib_bihash_add_del_48_8 (&ptd->ipv6_session_hash, &kv, 0 /* is_add */);
+            goto create_new_session_v6;
+        }
+
         session = pool_elt_at_index (ptd->session_pool, kv.value);
         session->last_packet_time = now;
 
@@ -704,6 +723,15 @@ ips_session_lookup_or_create_ipv6 (u32 thread_index,
     ips_session_set_bihash_key6 (&kv, &reverse_key);
     if (clib_bihash_search_48_8 (&ptd->ipv6_session_hash, &kv, &kv) == 0)
     {
+        /* 安全检查：验证会话池索引是否有效 */
+        if (PREDICT_FALSE (kv.value >= pool_len (ptd->session_pool) ||
+                         pool_is_free_index (ptd->session_pool, kv.value)))
+        {
+            /* 哈希表指向已释放的会话，需要清理哈希表条目 */
+            clib_bihash_add_del_48_8 (&ptd->ipv6_session_hash, &kv, 0 /* is_add */);
+            goto create_new_session_v6;
+        }
+
         session = pool_elt_at_index (ptd->session_pool, kv.value);
         session->last_packet_time = now;
 
@@ -787,6 +815,7 @@ ips_session_lookup_or_create_ipv6 (u32 thread_index,
     }
 
     /* 会话不存在，创建新会话 */
+create_new_session_v6:
     /* 只有 SYN 报文才能创建新会话 */
     if (!(tcp->flags & TCP_FLAG_SYN))
     {
@@ -938,6 +967,14 @@ ips_session_lookup_ipv6 (u32 thread_index, ips_session_key6_t * key)
     ips_session_set_bihash_key6 (&kv, key);
     if (clib_bihash_search_48_8 (&ptd->ipv6_session_hash, &kv, &kv) == 0)
     {
+        /* 安全检查：验证会话池索引是否有效 */
+        if (PREDICT_FALSE (kv.value >= pool_len (ptd->session_pool) ||
+                         pool_is_free_index (ptd->session_pool, kv.value)))
+        {
+            /* 哈希表指向已释放的会话，返回 NULL */
+            return NULL;
+        }
+
         return pool_elt_at_index (ptd->session_pool, kv.value);
     }
 
@@ -960,13 +997,72 @@ ips_session_delete (u32 thread_index, ips_session_t * session)
     clib_bihash_kv_16_8_t kv4;
     clib_bihash_kv_48_8_t kv6;
 
-    /* 停止定时器 */
+    /* 停止定时器（如果还没有过期）*/
     if (session->flags & IPS_SESSION_FLAG_TIMER_ACTIVE)
     {
         ips_session_timer_stop_args_t stop_args;
         stop_args.thread_index = thread_index;
         stop_args.timer_handle = session->timer_handle;
         ips_session_timer_stop (&stop_args);
+        session->flags &= ~IPS_SESSION_FLAG_TIMER_ACTIVE;
+        session->timer_handle = ~0;  /* Clear timer handle to prevent double-free */
+    }
+
+    /* 从哈希表中删除 */
+    if (session->is_ipv6)
+    {
+        ips_session_key6_t key;
+        clib_memset (&key, 0, sizeof (key));
+        key.src_ip = session->src_ip6;
+        key.dst_ip = session->dst_ip6;
+        key.src_port = session->src_port;
+        key.dst_port = session->dst_port;
+        key.protocol = session->protocol;
+
+        ips_session_set_bihash_key6 (&kv6, &key);
+        clib_bihash_add_del_48_8 (&ptd->ipv6_session_hash, &kv6, 0 /* is_add */);
+    }
+    else
+    {
+        ips_session_key4_t key;
+        clib_memset (&key, 0, sizeof (key));
+        key.src_ip = session->src_ip4;
+        key.dst_ip = session->dst_ip4;
+        key.src_port = session->src_port;
+        key.dst_port = session->dst_port;
+        key.protocol = session->protocol;
+
+        ips_session_set_bihash_key4 (&kv4, &key);
+        clib_bihash_add_del_16_8 (&ptd->ipv4_session_hash, &kv4, 0 /* is_add */);
+    }
+
+    /* 从池中删除 */
+    pool_put (ptd->session_pool, session);
+
+    /* 更新统计 */
+    ptd->total_sessions_deleted++;
+}
+
+/**
+ * @brief 删除会话（不停止定时器 - 用于定时器过期回调）
+ */
+void
+ips_session_delete_no_timer (u32 thread_index, ips_session_t * session)
+{
+    ips_session_manager_t *sm = &ips_session_manager;
+
+    /* 线程索引边界检查 */
+    if (PREDICT_FALSE (thread_index >= vec_len (sm->per_thread_data) || !session))
+        return;
+
+    ips_session_per_thread_data_t *ptd = &sm->per_thread_data[thread_index];
+    clib_bihash_kv_16_8_t kv4;
+    clib_bihash_kv_48_8_t kv6;
+
+    /* Timer handle should already be cleared by the expiration callback
+     * following VPP TCP pattern. No need to clear it again here. */
+    if (session->flags & IPS_SESSION_FLAG_TIMER_ACTIVE)
+    {
         session->flags &= ~IPS_SESSION_FLAG_TIMER_ACTIVE;
     }
 

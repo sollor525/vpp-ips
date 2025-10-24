@@ -85,11 +85,8 @@ ips_session_show_aging_command_fn (vlib_main_t * vm,
         ips_session_get_aging_stats (i, &aging_stats);
 
         vlib_cli_output (vm, "Thread %u:", i);
-        vlib_cli_output (vm, "  SYN-only sessions: %llu", aging_stats.syn_only_sessions);
-        vlib_cli_output (vm, "  SYN+ACK sessions: %llu", aging_stats.syn_ack_sessions);
-        vlib_cli_output (vm, "  Established sessions: %llu", aging_stats.established_sessions);
-        vlib_cli_output (vm, "  Expired sessions: %llu", aging_stats.expired_sessions);
-        vlib_cli_output (vm, "  Forced cleanup sessions: %llu", aging_stats.forced_cleanup_sessions);
+        vlib_cli_output (vm, "  Sessions expired by timers: %llu", aging_stats.expired_sessions);
+        vlib_cli_output (vm, "  Sessions cleaned by force: %llu", aging_stats.forced_cleanup_sessions);
         vlib_cli_output (vm, "  Emergency cleanup count: %u",
                         ptd->aging_state.emergency_cleanup_count);
         vlib_cli_output (vm, "  Last cleanup time: %.3f",

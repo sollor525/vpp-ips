@@ -43,12 +43,13 @@ typedef enum
 } ips_session_direction_t;
 
 /* 会话标志位 */
-#define IPS_SESSION_FLAG_ESTABLISHED   (1 << 0)
-#define IPS_SESSION_FLAG_STATELESS     (1 << 1)
-#define IPS_SESSION_FLAG_MIRRORED       (1 << 2)
-#define IPS_SESSION_FLAG_DETECTED      (1 << 3)
-#define IPS_SESSION_FLAG_BLOCKED       (1 << 4)
-#define IPS_SESSION_FLAG_TIMER_ACTIVE  (1 << 5)  /* 定时器激活标志 */
+#define IPS_SESSION_FLAG_ESTABLISHED     (1 << 0)
+#define IPS_SESSION_FLAG_STATELESS       (1 << 1)
+#define IPS_SESSION_FLAG_MIRRORED         (1 << 2)
+#define IPS_SESSION_FLAG_DETECTED        (1 << 3)
+#define IPS_SESSION_FLAG_BLOCKED         (1 << 4)
+#define IPS_SESSION_FLAG_TIMER_ACTIVE    (1 << 5)  /* 定时器激活标志 */
+#define IPS_SESSION_FLAG_PENDING_CLEANUP (1 << 6)  /* 待清理标志 */
 
 /* IPv4 会话键 */
 typedef struct
@@ -334,6 +335,7 @@ ips_session_t *ips_session_lookup_ipv6 (u32 thread_index,
                                          ips_session_key6_t * key);
 
 void ips_session_delete (u32 thread_index, ips_session_t * session);
+void ips_session_delete_no_timer (u32 thread_index, ips_session_t * session);
 
 /* 会话老化管理 */
 void ips_session_aging_process (u32 thread_index);

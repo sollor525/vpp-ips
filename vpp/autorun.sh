@@ -82,8 +82,18 @@ if [[ -f "$SCRIPT_DIR/build-root/install-vpp_${VPP_FLAVOUR}-native/vpp/CMakeFile
   systemctl is-active -q vpp || { echo "VPP 启动失败"; exit 1; }
 else
   # 简单前台启动（调试时方便看日志）
-  pkill -9 vpp
-  sleep 2
+  # 如果存在 vpp 进程则优雅/强制终止
+    if pgrep -x vpp_main >/dev/null; then
+      echo "正在停止 VPP ..."
+      pkill -9 vpp_main
+      # 等待完全退出（可选）
+      while pgrep -x vpp_main >/dev/null; do
+        sleep 0.2
+      done
+      echo "VPP 已停止"
+  else
+    echo "VPP 未运行，跳过 kill"
+  fi
   nohup "$VPP_BIN" -c /etc/vpp/startup.conf >/tmp/vpp.log 2>&1 &
   sleep 2
   pgrep -x vpp_main >/dev/null || { echo "VPP 前台启动失败，查看 /tmp/vpp.log"; exit 1; }

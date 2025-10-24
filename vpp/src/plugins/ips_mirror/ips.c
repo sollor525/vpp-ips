@@ -25,6 +25,7 @@
 #include "ips.h"
 #include "ips_logging.h"
 #include "session/ips_session.h"
+#include "session/ips_session_timer.h"
 
 /* Module headers */
 #include "detection/ips_detection_module.h"
@@ -64,7 +65,7 @@ ips_init (vlib_main_t *vm)
   /* Initialize configuration with defaults */
   im->session_timeout = 300;    /* 5 minutes */
   im->cleanup_interval = 60;    /* 1 minute */
-  im->promiscuous_mode = 0;     /* Disabled by default */
+  im->promiscuous_mode = 1;     /* Enabled by default for mirror traffic */
   im->rules_compiled = 0;
   im->rules_dirty = 0;
 
@@ -87,6 +88,10 @@ ips_init (vlib_main_t *vm)
   error = ips_rules_module_init ();
   if (error)
     return error;
+
+  /* Enable session timer process node */
+  vlib_node_set_state (vm, ips_session_timer_process_node.index,
+                       VLIB_NODE_STATE_POLLING);
 
   return 0;
 }
