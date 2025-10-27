@@ -1285,7 +1285,10 @@ ips_session_get_stats (const ips_session_get_stats_args_t *args)
     ips_session_manager_t *sm = &ips_session_manager;
     ips_session_per_thread_data_t *ptd = &sm->per_thread_data[args->thread_index];
 
-    *args->active_sessions = pool_elts (ptd->session_pool);
+    /* Use counter-based calculation instead of pool_elts() for accuracy
+     * pool_elts() may include freed elements in its count due to internal
+     * free list management, especially after heavy churn */
+    *args->active_sessions = (u32)(ptd->total_sessions_created - ptd->total_sessions_deleted);
     *args->total_created = ptd->total_sessions_created;
     *args->total_deleted = ptd->total_sessions_deleted;
 }

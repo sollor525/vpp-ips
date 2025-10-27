@@ -36,6 +36,7 @@ set(IPS_SOURCES
 
   # Blocking module
   block/ips_block.c
+  block/ips_block_node.c
   block/ips_block_cli.c
 
   # ACL module

@@ -135,7 +135,7 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                     tcp_header_t *tcph = ip4_next_header (ip4h);
                     ips_session_t *session = ips_session_lookup_or_create_ipv4 (thread_index, ip4h, tcph);
 
-                    /* Check if session is blocked */
+                    /* Check if session is blocked - if so, send to block node for TCP reset */
                     if (session && (session->flags & IPS_SESSION_FLAG_BLOCKED))
                     {
                         next0 = IPS_INPUT_NEXT_BLOCK;
@@ -158,7 +158,7 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                     tcp_header_t *tcph = ip6_next_header (ip6h);
                     ips_session_t *session = ips_session_lookup_or_create_ipv6 (thread_index, ip6h, tcph);
 
-                    /* Check if session is blocked */
+                    /* Check if session is blocked - if so, send to block node for TCP reset */
                     if (session && (session->flags & IPS_SESSION_FLAG_BLOCKED))
                     {
                         next0 = IPS_INPUT_NEXT_BLOCK;
@@ -238,7 +238,7 @@ VLIB_REGISTER_NODE (ips_input_ip4_node) =
         [IPS_INPUT_NEXT_IP4_LOOKUP] = "ip4-lookup",
         [IPS_INPUT_NEXT_IP6_LOOKUP] = "ip6-lookup",
         [IPS_INPUT_NEXT_ETHERNET_INPUT] = "ethernet-input",
-        [IPS_INPUT_NEXT_BLOCK] = "ips-block-process",
+        [IPS_INPUT_NEXT_BLOCK] = "ips-block-node",
     },
 };
 
@@ -258,7 +258,7 @@ VLIB_REGISTER_NODE (ips_input_ip6_node) =
         [IPS_INPUT_NEXT_IP4_LOOKUP] = "ip4-lookup",
         [IPS_INPUT_NEXT_IP6_LOOKUP] = "ip6-lookup",
         [IPS_INPUT_NEXT_ETHERNET_INPUT] = "ethernet-input",
-        [IPS_INPUT_NEXT_BLOCK] = "ips-block-process",
+        [IPS_INPUT_NEXT_BLOCK] = "ips-block-node",
     },
 };
 

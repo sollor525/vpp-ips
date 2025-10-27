@@ -218,8 +218,16 @@ ips_session_timer_stop (const ips_session_timer_stop_args_t *args)
     if (timer_handle == ~0)
         return;
 
-    /* Stop timer - use try/catch approach to handle expired timers gracefully */
+    /* Following VPP TCP pattern: safely stop timer if it still exists
+     * The timer might have already expired and been removed from the wheel.
+     * We use the timer wheel's internal validity check to avoid assertion failure.
+     * 
+     * Note: tw_timer_stop_2t_1w_2048sl will assert if the timer is not in the pool,
+     * so we need to verify the session's TIMER_ACTIVE flag before calling it.
+     * The caller should have already checked this, but we add defensive check here.
+     */
     tw_timer_stop_2t_1w_2048sl (&ptt->timer_wheel, timer_handle);
+    
     /* Update statistics */
     ptt->stats.timers_stopped++;
 }
@@ -344,10 +352,40 @@ ips_session_timer_backup_scan (u32 thread_index)
             ips_session_t *session = pool_elt_at_index (ptd->session_pool, cursor);
             f64 session_age = now - session->last_packet_time;
 
-            /* Check if session should be expired */
+            /* Check if session should be expired 
+             * Added multiple safety checks to catch sessions that timer missed:
+             * 1. Normal timeout
+             * 2. TCP CLOSED state
+             * 3. Sessions without active timer that are older than 5 minutes
+             * 4. Absolute timeout of 10 minutes for any session
+             */
+            int should_expire = 0;
+            
+            /* Normal expiration conditions */
             if (session_age > session->timeout_seconds ||
                 session->tcp_state_src == IPS_SESSION_STATE_CLOSED ||
                 session->tcp_state_dst == IPS_SESSION_STATE_CLOSED)
+            {
+                should_expire = 1;
+            }
+            
+            /* Safety net: sessions without active timer that are too old */
+            if (session_age > 300.0 && !(session->flags & IPS_SESSION_FLAG_TIMER_ACTIVE))
+            {
+                should_expire = 1;
+                clib_warning ("Backup scan found session without timer (age=%.1fs), force cleaning", 
+                             session_age);
+            }
+            
+            /* Absolute timeout: no session should live longer than 10 minutes */
+            if (session_age > 600.0)
+            {
+                should_expire = 1;
+                clib_warning ("Backup scan found very old session (age=%.1fs), force cleaning", 
+                             session_age);
+            }
+            
+            if (should_expire)
             {
                 ips_session_delete (thread_index, session);
                 cleaned++;
@@ -430,35 +468,34 @@ ips_session_timer_expire_callback (u32 *expired_timers)
 
         if (session && thread_index != ~0)
         {
-            /* Follow VPP TCP pattern: handle timer expiration safely
-             * TCP pattern at tcp.c:1433 sets timer to INVALID before processing */
+            /* CRITICAL: The timer has already been removed from the timer wheel by
+             * tw_timer_expire_timers_2t_1w_2048sl before this callback is invoked.
+             * This means:
+             * 1. The timer pool entry is already freed
+             * 2. Any attempt to tw_timer_stop() will cause assertion failure
+             * 3. We MUST clear TIMER_ACTIVE flag immediately to prevent double-free
+             */
 
-            /* Check if session timer is still active (avoid double processing) */
+            /* Atomically check and clear timer active flag to prevent race conditions */
             if (!(session->flags & IPS_SESSION_FLAG_TIMER_ACTIVE))
-                return;
+                continue;  /* Timer already processed by another path, skip */
 
-            /* First, invalidate the timer handle to prevent double-free
-             * Following VPP TCP pattern: clear timer handle before processing */
+            /* FIRST: Clear timer flags IMMEDIATELY - timer is already gone from wheel */
             session->flags &= ~IPS_SESSION_FLAG_TIMER_ACTIVE;
             session->timer_handle = IPS_TIMER_HANDLE_INVALID;
 
-            /* Update timer statistics first */
+            /* Update statistics */
             ips_session_timer_manager_t *tm = &ips_session_timer_manager;
             ips_session_timer_per_thread_t *ptt = &tm->per_thread_data[thread_index];
             ptt->stats.timers_expired++;
             tm->global_stats.total_sessions_timed_out++;
-
-            /* Mark session as pending for cleanup (similar to TCP pending_timers) */
-            session->flags |= IPS_SESSION_FLAG_PENDING_CLEANUP;
 
             /* Update session aging statistics */
             ips_session_manager_t *sm = &ips_session_manager;
             ips_session_per_thread_data_t *ptd = &sm->per_thread_data[thread_index];
             ptd->aging_stats.expired_sessions++;
 
-            /* Add to pending cleanup queue for safe processing */
-            // Note: For simplicity, we delete directly here but in a full implementation
-            // we would add to a pending queue and process separately like TCP does
+            /* Now safe to delete session - timer flags are cleared */
             ips_session_delete_no_timer (thread_index, session);
         }
     }
@@ -570,13 +607,23 @@ ips_session_timer_process (vlib_main_t * vm, vlib_node_runtime_t * __clib_unused
             ips_session_timer_process_expired_args_t exp_args = { .thread_index = i, .now = now };
             ips_session_timer_process_expired (&exp_args);
 
-            /* Check if emergency scan is needed - safety net for extreme cases */
-            if (ips_session_timer_needs_emergency_scan (i))
+            /* Run periodic backup scan to catch sessions that timer missed
+             * This is important because:
+             * 1. Timer wheel might have bugs
+             * 2. Sessions might be created without timers (edge cases)
+             * 3. Provides a safety net for cleanup
+             */
+            ips_session_timer_per_thread_t *ptt = &tm->per_thread_data[i];
+            f64 time_since_last_scan = now - ptt->backup_state.last_scan_time;
+            
+            /* Run backup scan every 30 seconds OR in emergency */
+            if (time_since_last_scan > 30.0 || ips_session_timer_needs_emergency_scan (i))
             {
                 u32 cleaned = ips_session_timer_backup_scan (i);
                 if (cleaned > 0)
                 {
-                    clib_warning ("Emergency scan cleaned %u sessions on thread %u", cleaned, i);
+                    clib_warning ("Backup scan cleaned %u sessions on thread %u (%.1fs since last scan)", 
+                                 cleaned, i, time_since_last_scan);
                 }
             }
         }

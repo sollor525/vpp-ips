@@ -78,17 +78,18 @@ ips_acl_add_rule_command_fn(vlib_main_t *vm,
     ips_acl_rule_t rule = {0};
     u32 src_port = 0, dst_port = 0;
     u8 have_src_ip = 0, have_dst_ip = 0;
+    u8 is_ipv4 = 0, is_ipv6 = 0;
 
     /* Parse source IP */
     if (unformat(input, "src %U", unformat_ip4_address, &rule.src_ip.ip4))
     {
-        rule.is_ipv6 = 0;
+        is_ipv4 = 1;
         rule.src_prefixlen = 32; /* Default to single host */
         have_src_ip = 1;
     }
     else if (unformat(input, "src %U", unformat_ip6_address, &rule.src_ip.ip6))
     {
-        rule.is_ipv6 = 1;
+        is_ipv6 = 1;
         rule.src_prefixlen = 128; /* Default to single host */
         have_src_ip = 1;
     }
@@ -96,16 +97,25 @@ ips_acl_add_rule_command_fn(vlib_main_t *vm,
     /* Parse destination IP and port */
     if (unformat(input, "dst %U", unformat_ip4_address, &rule.dst_ip.ip4))
     {
-        rule.is_ipv6 = 0;
+        is_ipv4 = 1;
         rule.dst_prefixlen = 32; /* Default to single host */
         have_dst_ip = 1;
     }
     else if (unformat(input, "dst %U", unformat_ip6_address, &rule.dst_ip.ip6))
     {
-        rule.is_ipv6 = 1;
+        is_ipv6 = 1;
         rule.dst_prefixlen = 128; /* Default to single host */
         have_dst_ip = 1;
     }
+    
+    /* Validate IP version consistency */
+    if (is_ipv4 && is_ipv6)
+    {
+        return clib_error_return(0, "Cannot mix IPv4 and IPv6 addresses in the same rule");
+    }
+    
+    /* Set IP version for the rule (default to IPv4 if no IPs specified) */
+    rule.is_ipv6 = is_ipv6;
 
     /* Parse destination port */
     if (unformat(input, "dst-port %u", &dst_port))
@@ -202,16 +212,50 @@ ips_acl_add_rule_command_fn(vlib_main_t *vm,
         rule.tcp_flags_mask = IPS_TCP_FLAG_SYN | IPS_TCP_FLAG_ACK;
     }
 
-    /* Validate required fields */
+    /* Validate that at least one match criterion is specified */
+    if (!have_src_ip && !have_dst_ip && rule.protocol == 0 && 
+        src_port == 0 && dst_port == 0)
+    {
+        return clib_error_return(0, "At least one match criterion required (src, dst, protocol, or port)");
+    }
+
+    /* Set default values for unspecified fields */
+    
+    /* If no source IP specified, match any source */
     if (!have_src_ip)
-        return clib_error_return(0, "Source IP is required");
-
+    {
+        if (rule.is_ipv6)
+        {
+            clib_memset(&rule.src_ip.ip6, 0, sizeof(ip6_address_t));
+            rule.src_prefixlen = 0; /* Match any IPv6 */
+        }
+        else
+        {
+            rule.src_ip.ip4.as_u32 = 0;
+            rule.src_prefixlen = 0; /* Match any IPv4 */
+        }
+    }
+    
+    /* If no destination IP specified, match any destination */
     if (!have_dst_ip)
-        return clib_error_return(0, "Destination IP is required");
-
-    /* Set default values */
+    {
+        if (rule.is_ipv6)
+        {
+            clib_memset(&rule.dst_ip.ip6, 0, sizeof(ip6_address_t));
+            rule.dst_prefixlen = 0; /* Match any IPv6 */
+        }
+        else
+        {
+            rule.dst_ip.ip4.as_u32 = 0;
+            rule.dst_prefixlen = 0; /* Match any IPv4 */
+        }
+    }
+    
+    /* If no protocol specified, match any protocol (0 = any) */
     if (rule.protocol == 0)
-        rule.protocol = IP_PROTOCOL_TCP; /* Default to TCP */
+    {
+        /* 0 means match any protocol */
+    }
 
     /* Set default port ranges if not specified */
     if (rule.src_port_start == 0 && rule.src_port_end == 0)
@@ -411,7 +455,13 @@ ips_acl_test_block_command_fn(vlib_main_t *vm,
 /* CLI command definitions */
 VLIB_CLI_COMMAND(ips_acl_add_rule_command, static) = {
     .path = "ips acl add rule",
-    .short_help = "ips acl add rule src <IP> dst <IP> [dst-port <port>] [src-port <port>] [tcp|udp] action <permit|deny|reset|log>",
+    .short_help = 
+        "ips acl add rule [src <IP>] [dst <IP>] [dst-port <port>] [src-port <port>] [tcp|udp] action <permit|deny|reset|log>\n"
+        "  At least one match criterion is required (src, dst, protocol, or port)\n"
+        "  Examples:\n"
+        "    - Block specific IP: ips acl add rule src 192.168.1.100 action deny\n"
+        "    - Block all to port 22: ips acl add rule dst-port 22 tcp action deny\n"
+        "    - Allow specific connection: ips acl add rule src 10.0.0.1 dst 10.0.0.2 dst-port 80 tcp action permit",
     .function = ips_acl_add_rule_command_fn,
 };
 
