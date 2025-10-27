@@ -216,4 +216,27 @@ const char *ips_block_action_to_string(ips_block_action_t action);
  */
 const char *ips_block_reason_to_string(ips_block_reason_t reason);
 
+/* Blocking node statistics */
+typedef struct
+{
+    u64 packets_processed;
+    u64 tcp_resets_sent;
+    u64 icmp_unreach_sent;
+    u64 silent_drops;
+    u64 failed_blocks;
+} ips_block_node_stats_t;
+
+/**
+ * @brief Get blocking node statistics
+ * @param thread_index Thread index
+ * @param stats Pointer to store statistics
+ */
+void ips_block_node_get_stats(u32 thread_index, ips_block_node_stats_t *stats);
+
+/**
+ * @brief Reset blocking node statistics
+ * @param thread_index Thread index
+ */
+void ips_block_node_reset_stats(u32 thread_index);
+
 #endif /* __IPS_BLOCK_H__ */

@@ -16,8 +16,10 @@
 #include "ips_session_timer.h"
 #include "../acl/ips_acl.h"
 
+
 /* 全局会话管理器实例 */
 ips_session_manager_t ips_session_manager;
+
 
 /* Forward declarations for ACL functions */
 static int ips_session_check_acl(u32 thread_index, ips_session_t *session,
@@ -194,7 +196,7 @@ ips_session_per_thread_cleanup (u32 thread_index)
 
 /**
  * @brief Check session against ACL rules
- * @return 0 if allowed, 1 if denied/reset
+ * @return 1 if session should be blocked, 0 if allowed
  */
 static int
 ips_session_check_acl(u32 thread_index, ips_session_t *session,
@@ -296,15 +298,15 @@ ips_session_lookup_or_create_ipv4 (u32 thread_index,
         session->last_packet_time = now;
 
         /* Check ACL rules for existing session */
-        if (session->flags & IPS_SESSION_FLAG_BLOCKED)
+        if (!(session->flags & IPS_SESSION_FLAG_BLOCKED))
         {
-            /* Session already blocked, continue to block */
-            return NULL;
+            /* Only check ACL if session is not already blocked */
+            ips_session_check_acl(thread_index, session, ip4, NULL, tcp);
         }
 
-        if (ips_session_check_acl(thread_index, session, ip4, NULL, tcp))
+        /* If session is blocked (either previously or just now), don't allow processing */
+        if (session->flags & IPS_SESSION_FLAG_BLOCKED)
         {
-            /* ACL check failed, session blocked */
             return NULL;
         }
 
@@ -399,15 +401,15 @@ ips_session_lookup_or_create_ipv4 (u32 thread_index,
         session->last_packet_time = now;
 
         /* Check ACL rules for existing session */
-        if (session->flags & IPS_SESSION_FLAG_BLOCKED)
+        if (!(session->flags & IPS_SESSION_FLAG_BLOCKED))
         {
-            /* Session already blocked, continue to block */
-            return NULL;
+            /* Only check ACL if session is not already blocked */
+            ips_session_check_acl(thread_index, session, ip4, NULL, tcp);
         }
 
-        if (ips_session_check_acl(thread_index, session, ip4, NULL, tcp))
+        /* If session is blocked (either previously or just now), don't allow processing */
+        if (session->flags & IPS_SESSION_FLAG_BLOCKED)
         {
-            /* ACL check failed, session blocked */
             return NULL;
         }
 
@@ -633,15 +635,15 @@ ips_session_lookup_or_create_ipv6 (u32 thread_index,
         session->last_packet_time = now;
 
         /* Check ACL rules for existing session */
-        if (session->flags & IPS_SESSION_FLAG_BLOCKED)
+        if (!(session->flags & IPS_SESSION_FLAG_BLOCKED))
         {
-            /* Session already blocked, continue to block */
-            return NULL;
+            /* Only check ACL if session is not already blocked */
+            ips_session_check_acl(thread_index, session, NULL, ip6, tcp);
         }
 
-        if (ips_session_check_acl(thread_index, session, NULL, ip6, tcp))
+        /* If session is blocked (either previously or just now), don't allow processing */
+        if (session->flags & IPS_SESSION_FLAG_BLOCKED)
         {
-            /* ACL check failed, session blocked */
             return NULL;
         }
 
@@ -736,15 +738,15 @@ ips_session_lookup_or_create_ipv6 (u32 thread_index,
         session->last_packet_time = now;
 
         /* Check ACL rules for existing session */
-        if (session->flags & IPS_SESSION_FLAG_BLOCKED)
+        if (!(session->flags & IPS_SESSION_FLAG_BLOCKED))
         {
-            /* Session already blocked, continue to block */
-            return NULL;
+            /* Only check ACL if session is not already blocked */
+            ips_session_check_acl(thread_index, session, NULL, ip6, tcp);
         }
 
-        if (ips_session_check_acl(thread_index, session, NULL, ip6, tcp))
+        /* If session is blocked (either previously or just now), don't allow processing */
+        if (session->flags & IPS_SESSION_FLAG_BLOCKED)
         {
-            /* ACL check failed, session blocked */
             return NULL;
         }
 

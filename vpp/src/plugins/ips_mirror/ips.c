@@ -26,6 +26,7 @@
 #include "ips_logging.h"
 #include "session/ips_session.h"
 #include "session/ips_session_timer.h"
+#include "block/ips_block.h"
 
 /* Module headers */
 #include "detection/ips_detection_module.h"
@@ -81,6 +82,11 @@ ips_init (vlib_main_t *vm)
 
   /* Initialize session manager (includes timer manager) */
   error = ips_session_manager_init (vm);
+  if (error)
+    return error;
+
+  /* Initialize blocking module */
+  error = ips_block_init (vm);
   if (error)
     return error;
 

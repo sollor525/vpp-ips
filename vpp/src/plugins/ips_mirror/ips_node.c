@@ -46,6 +46,7 @@ typedef enum
     IPS_INPUT_NEXT_IP4_LOOKUP,
     IPS_INPUT_NEXT_IP6_LOOKUP,
     IPS_INPUT_NEXT_ETHERNET_INPUT,
+    IPS_INPUT_NEXT_BLOCK,
     IPS_INPUT_N_NEXT,
 } ips_input_next_t;
 
@@ -132,9 +133,22 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                 if (PREDICT_TRUE (ip4h->protocol == IP_PROTOCOL_TCP))
                 {
                     tcp_header_t *tcph = ip4_next_header (ip4h);
-                    (void) ips_session_lookup_or_create_ipv4 (thread_index, ip4h, tcph);
+                    ips_session_t *session = ips_session_lookup_or_create_ipv4 (thread_index, ip4h, tcph);
+
+                    /* Check if session is blocked */
+                    if (session && (session->flags & IPS_SESSION_FLAG_BLOCKED))
+                    {
+                        next0 = IPS_INPUT_NEXT_BLOCK;
+                    }
+                    else
+                    {
+                        next0 = IPS_INPUT_NEXT_IP4_LOOKUP;
+                    }
                 }
-                next0 = IPS_INPUT_NEXT_IP4_LOOKUP;
+                else
+                {
+                    next0 = IPS_INPUT_NEXT_IP4_LOOKUP;
+                }
             }
             else
             {
@@ -142,9 +156,22 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                 if (PREDICT_TRUE (ip6h->protocol == IP_PROTOCOL_TCP))
                 {
                     tcp_header_t *tcph = ip6_next_header (ip6h);
-                    (void) ips_session_lookup_or_create_ipv6 (thread_index, ip6h, tcph);
+                    ips_session_t *session = ips_session_lookup_or_create_ipv6 (thread_index, ip6h, tcph);
+
+                    /* Check if session is blocked */
+                    if (session && (session->flags & IPS_SESSION_FLAG_BLOCKED))
+                    {
+                        next0 = IPS_INPUT_NEXT_BLOCK;
+                    }
+                    else
+                    {
+                        next0 = IPS_INPUT_NEXT_IP6_LOOKUP;
+                    }
                 }
-                next0 = IPS_INPUT_NEXT_IP6_LOOKUP;
+                else
+                {
+                    next0 = IPS_INPUT_NEXT_IP6_LOOKUP;
+                }
             }
 
             pkts_processed++;
@@ -211,6 +238,7 @@ VLIB_REGISTER_NODE (ips_input_ip4_node) =
         [IPS_INPUT_NEXT_IP4_LOOKUP] = "ip4-lookup",
         [IPS_INPUT_NEXT_IP6_LOOKUP] = "ip6-lookup",
         [IPS_INPUT_NEXT_ETHERNET_INPUT] = "ethernet-input",
+        [IPS_INPUT_NEXT_BLOCK] = "ips-block-process",
     },
 };
 
@@ -230,6 +258,7 @@ VLIB_REGISTER_NODE (ips_input_ip6_node) =
         [IPS_INPUT_NEXT_IP4_LOOKUP] = "ip4-lookup",
         [IPS_INPUT_NEXT_IP6_LOOKUP] = "ip6-lookup",
         [IPS_INPUT_NEXT_ETHERNET_INPUT] = "ethernet-input",
+        [IPS_INPUT_NEXT_BLOCK] = "ips-block-process",
     },
 };
 

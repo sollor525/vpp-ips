@@ -23,7 +23,7 @@
 #include "session/ips_session.h"
 #include "../block/ips_block.h"
 
-/* Note: VPP ACL API integration temporarily disabled for compilation */
+/* Note: VPP ACL API integration uses the exported_types.h interface */
 /* #include <vlibmemory/api.h> */
 /* #include <plugins/acl/acl.api_enum.h> */
 /* #include <plugins/acl/acl_types.api> */
@@ -661,127 +661,8 @@ ips_acl_cleanup(void)
 /*         return IPS_ACL_ACTION_PERMIT; */
 /* } */
 
-/**
- * @brief Check if packet matches IPS ACL rule
- */
-static int
-ips_acl_match_rule(ips_acl_rule_t *rule, ip4_header_t *ip4, ip6_header_t *ip6, tcp_header_t *tcp)
-{
-    if (!rule)
-        return 0;
-
-    /* Check IP version */
-    if (rule->is_ipv6 && !ip6)
-        return 0;
-    if (!rule->is_ipv6 && !ip4)
-        return 0;
-
-    /* Check protocol */
-    if (rule->protocol != 0)
-    {
-        u8 packet_protocol = rule->is_ipv6 ? ip6->protocol : ip4->protocol;
-        if (packet_protocol != rule->protocol)
-            return 0;
-    }
-
-    /* Check source IP */
-    if (rule->src_prefixlen > 0)
-    {
-        if (rule->is_ipv6)
-        {
-            /* Simple IPv6 address comparison with prefix length */
-            for (int i = 0; i < 4; i++) {
-                u32 src_word = ip6->src_address.as_u32[i];
-                u32 rule_word = rule->src_ip.ip6.as_u32[i];
-                u32 mask;
-
-                if (rule->src_prefixlen >= (i + 1) * 32) {
-                    mask = 0xffffffff;
-                } else if (rule->src_prefixlen <= i * 32) {
-                    mask = 0;
-                } else {
-                    int bits = rule->src_prefixlen - i * 32;
-                    mask = bits == 32 ? 0xffffffff : (0xffffffff << (32 - bits));
-                }
-
-                if ((src_word & mask) != (rule_word & mask))
-                    return 0;
-            }
-        }
-        else
-        {
-            ip4_address_t mask;
-            ip4_preflen_to_mask(rule->src_prefixlen, &mask);
-            if ((ip4->src_address.as_u32 & mask.as_u32) !=
-                (rule->src_ip.ip4.as_u32 & mask.as_u32))
-                return 0;
-        }
-    }
-
-    /* Check destination IP */
-    if (rule->dst_prefixlen > 0)
-    {
-        if (rule->is_ipv6)
-        {
-            /* Simple IPv6 address comparison with prefix length */
-            for (int i = 0; i < 4; i++) {
-                u32 dst_word = ip6->dst_address.as_u32[i];
-                u32 rule_word = rule->dst_ip.ip6.as_u32[i];
-                u32 mask;
-
-                if (rule->dst_prefixlen >= (i + 1) * 32) {
-                    mask = 0xffffffff;
-                } else if (rule->dst_prefixlen <= i * 32) {
-                    mask = 0;
-                } else {
-                    int bits = rule->dst_prefixlen - i * 32;
-                    mask = bits == 32 ? 0xffffffff : (0xffffffff << (32 - bits));
-                }
-
-                if ((dst_word & mask) != (rule_word & mask))
-                    return 0;
-            }
-        }
-        else
-        {
-            ip4_address_t mask;
-            ip4_preflen_to_mask(rule->dst_prefixlen, &mask);
-            if ((ip4->dst_address.as_u32 & mask.as_u32) !=
-                (rule->dst_ip.ip4.as_u32 & mask.as_u32))
-                return 0;
-        }
-    }
-
-    /* Check TCP/UDP ports */
-    if (tcp && (rule->protocol == IP_PROTOCOL_TCP || rule->protocol == IP_PROTOCOL_UDP))
-    {
-        /* Check source port */
-        if (rule->src_port_start > 0 || rule->src_port_end > 0)
-        {
-            u16 src_port = clib_net_to_host_u16(tcp->src_port);
-            if (src_port < rule->src_port_start || src_port > rule->src_port_end)
-                return 0;
-        }
-
-        /* Check destination port */
-        if (rule->dst_port_start > 0 || rule->dst_port_end > 0)
-        {
-            u16 dst_port = clib_net_to_host_u16(tcp->dst_port);
-            if (dst_port < rule->dst_port_start || dst_port > rule->dst_port_end)
-                return 0;
-        }
-
-        /* Check TCP flags */
-        if (rule->tcp_flags_mask > 0 && rule->protocol == IP_PROTOCOL_TCP)
-        {
-            u8 flags = tcp->flags & rule->tcp_flags_mask;
-            if (flags != rule->tcp_flags_value)
-                return 0;
-        }
-    }
-
-    return 1; /* Match */
-}
+/* Note: ips_acl_match_rule function removed as we now use VPP ACL plugin's
+ * match_5tuple API directly in ips_acl_check_packet for all rule matching. */
 
 /**
  * @brief Check packet against IPS ACL rules
@@ -809,48 +690,184 @@ ips_acl_check_packet(u32 thread_index, ips_session_t *session,
         ips_acl_context_t *ctx = &am->per_thread_contexts[thread_index];
         if (ctx->initialized && ctx->context_id >= 0 && vec_len(ctx->acl_list) > 0)
         {
-            /* For now, we rely on the IPS-specific rule matching below
-             * VPP ACL integration via the plugin API requires more complex
-             * buffer management that's better handled at the node level */
-        }
-    }
+            /* Use VPP ACL plugin for packet matching */
+            fa_5tuple_opaque_t pkt_5tuple;
+            u8 acl_action = 0;
+            u32 acl_pos = 0;
+            u32 acl_match = 0;
+            u32 rule_match = 0;
+            u32 trace_bitmap = 0;
+            int is_ip6 = (ip6 != NULL);
 
-    /* Check against IPS-specific rules */
-    if (am->ips_rules && pool_len(am->ips_rules) > 0)
-    {
-        ips_acl_rule_t *rule;
-        pool_foreach(rule, am->ips_rules)
-        {
-            if (!rule->enabled)
-                continue;
+            /* Fill 5-tuple for ACL matching
+             * Note: This requires access to vlib_buffer_t, but we only have headers.
+             * For now, we'll manually construct the 5-tuple from headers */
+            clib_memset(&pkt_5tuple, 0, sizeof(pkt_5tuple));
 
-            if (ips_acl_match_rule(rule, ip4, ip6, tcp))
+            if (is_ip6)
             {
-                rule->hit_count++;
-                rule->last_hit_time = now;
-                *action = rule->action;
+                ((fa_5tuple_t*)&pkt_5tuple)->ip6_addr[0] = ip6->src_address;
+                ((fa_5tuple_t*)&pkt_5tuple)->ip6_addr[1] = ip6->dst_address;
+            }
+            else
+            {
+                ((fa_5tuple_t*)&pkt_5tuple)->ip4_addr[0] = ip4->src_address;
+                ((fa_5tuple_t*)&pkt_5tuple)->ip4_addr[1] = ip4->dst_address;
+            }
 
-                switch (rule->action)
+            /* Set L4 information */
+            if (tcp)
+            {
+                ((fa_5tuple_t*)&pkt_5tuple)->l4.port[0] = tcp->src_port;
+                ((fa_5tuple_t*)&pkt_5tuple)->l4.port[1] = tcp->dst_port;
+                ((fa_5tuple_t*)&pkt_5tuple)->l4.proto = IP_PROTOCOL_TCP;
+                ((fa_5tuple_t*)&pkt_5tuple)->pkt.is_ip6 = is_ip6;
+                ((fa_5tuple_t*)&pkt_5tuple)->pkt.l4_valid = 1;
+            }
+            else
+            {
+                ((fa_5tuple_t*)&pkt_5tuple)->l4.proto = ip4 ? ip4->protocol : ip6->protocol;
+                ((fa_5tuple_t*)&pkt_5tuple)->pkt.is_ip6 = is_ip6;
+                ((fa_5tuple_t*)&pkt_5tuple)->pkt.l4_valid = 0;
+            }
+
+            /* Perform ACL match */
+            int match_result = am->acl_methods.match_5tuple(ctx->context_id, &pkt_5tuple,
+                                                         is_ip6, &acl_action,
+                                                         &acl_pos, &acl_match,
+                                                         &rule_match, &trace_bitmap);
+
+            if (match_result)
+            {
+                /* ACL matched - convert VPP ACL action to IPS ACL action */
+                switch (acl_action)
                 {
-                case IPS_ACL_ACTION_DENY:
+                case 0: /* Permit */
+                    *action = IPS_ACL_ACTION_PERMIT;
+                    stats->packets_permit++;
+                    return 0;
+
+                case 1:
+                default:
+                    /* Deny and other actions - treat as deny for safety */
+                    *action = IPS_ACL_ACTION_DENY;
                     stats->packets_denied++;
                     stats->sessions_blocked++;
                     return 1;
-                case IPS_ACL_ACTION_RESET:
-                    stats->packets_reset++;
+                }
+            }
+
+            /* No VPP ACL match - continue with IPS-specific state tracking */
+            /* Create session key for state tracking */
+            ips_session_key_t session_key;
+            clib_memset(&session_key, 0, sizeof(session_key));
+
+            if (ip4)
+            {
+                session_key.src_ip.ip4 = ip4->src_address;
+                session_key.dst_ip.ip4 = ip4->dst_address;
+                session_key.ip_version = 4;
+            }
+            else if (ip6)
+            {
+                session_key.src_ip.ip6 = ip6->src_address;
+                session_key.dst_ip.ip6 = ip6->dst_address;
+                session_key.ip_version = 6;
+            }
+
+            if (tcp)
+            {
+                session_key.src_port = tcp->src_port;
+                session_key.dst_port = tcp->dst_port;
+                session_key.protocol = IP_PROTOCOL_TCP;
+
+                /* Update TCP state tracking - determine direction based on session */
+                u8 direction = 0; /* Default: client->server */
+                if (session)
+                {
+                    /* Check if this packet matches the session direction */
+                    if ((ip4 &&
+                         ip4_address_compare(&ip4->src_address, &session->src_ip4) == 0 &&
+                         clib_net_to_host_u16(tcp->src_port) == session->src_port) ||
+                        (ip6 &&
+                         ip6_address_compare(&ip6->src_address, &session->src_ip6) == 0 &&
+                         clib_net_to_host_u16(tcp->src_port) == session->src_port))
+                    {
+                        direction = 0; /* Forward direction */
+                    }
+                    else
+                    {
+                        direction = 1; /* Reverse direction */
+                    }
+                }
+
+                ips_tcp_state_t current_state = ips_acl_update_tcp_state(&session_key, tcp, direction);
+                /* Update session state appropriately */
+                if (direction == 0)
+                {
+                    if (current_state == IPS_TCP_STATE_ESTABLISHED)
+                        session->tcp_state_src = IPS_SESSION_STATE_ESTABLISHED;
+                    else if (current_state == IPS_TCP_STATE_NEW)
+                        session->tcp_state_src = IPS_SESSION_STATE_SYN_RECVED;
+                }
+
+                /* Check for TCP state anomalies */
+                if (am->enable_tcp_state_tracking)
+                {
+                    /* Check for suspicious TCP state transitions */
+                    /* For example: data packet without proper handshake */
+                    if (tcp_doff(tcp) > 5 && /* Has data (data offset > 5) */
+                        current_state == IPS_TCP_STATE_NEW && /* But connection not established */
+                        !(tcp->flags & TCP_FLAG_SYN)) /* And not a SYN packet */
+                    {
+                        *action = IPS_ACL_ACTION_RESET;
+                        stats->packets_reset++;
+                        stats->sessions_blocked++;
+                        return 1;
+                    }
+                }
+            }
+            else
+            {
+                session_key.protocol = ip4 ? ip4->protocol : ip6->protocol;
+            }
+
+            /* Apply session-based rate limiting */
+            if (session && session->packet_count_src > 1000) /* High packet count */
+            {
+                f64 time_diff = now - session->last_packet_time;
+                if (time_diff < 1.0) /* More than 1000 packets in 1 second */
+                {
+                    *action = IPS_ACL_ACTION_DENY;
+                    stats->packets_denied++;
                     stats->sessions_blocked++;
                     return 1;
-                case IPS_ACL_ACTION_PERMIT:
-                case IPS_ACL_ACTION_LOG:    /* Log but continue processing */
-                    stats->packets_permit++;
-                    return 0;
                 }
             }
         }
     }
 
-    stats->packets_permit++;
-    return 0; /* Allow */
+    /* Since we're using VPP ACL plugin for rule matching,
+     * we don't need to check IPS-specific rules anymore.
+     * If VPP ACL didn't match, we apply default action. */
+
+    *action = am->default_action;
+    switch (am->default_action)
+    {
+    case IPS_ACL_ACTION_DENY:
+        stats->packets_denied++;
+        stats->sessions_blocked++;
+        return 1;
+    case IPS_ACL_ACTION_RESET:
+        stats->packets_reset++;
+        stats->sessions_blocked++;
+        return 1;
+    case IPS_ACL_ACTION_PERMIT:
+    case IPS_ACL_ACTION_LOG:    /* Log but continue processing */
+    default:
+        stats->packets_permit++;
+        return 0;
+    }
 }
 
 /**
