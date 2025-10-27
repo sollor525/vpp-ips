@@ -20,6 +20,7 @@
 #include <vppinfra/pool.h>
 
 #include "ips.h"
+/* acl/ips_acl.h is included via ips.h */
 
 /**
  * @brief Create a new flow session
@@ -138,52 +139,55 @@ ips_flow_update_tcp_state (ips_flow_t * flow, tcp_header_t * tcp, u8 is_to_serve
     *seq = clib_net_to_host_u32 (tcp->seq_number);
     *ack = clib_net_to_host_u32 (tcp->ack_number);
 
-    /* State machine transitions */
+    /* Simplified state machine for mirror traffic
+     * We see bidirectional traffic, so state transitions are simplified */
     switch (*state)
     {
-    case IPS_TCP_NONE:
+    case IPS_TCP_STATE_NONE:
+        /* Any SYN indicates new connection */
         if (tcp_flags & TCP_FLAG_SYN)
         {
-            *state = IPS_TCP_SYN_SENT;
+            *state = IPS_TCP_STATE_NEW;
         }
         break;
 
-    case IPS_TCP_SYN_SENT:
-        if (tcp_flags & (TCP_FLAG_SYN | TCP_FLAG_ACK))
-        {
-            *state = IPS_TCP_SYN_RECV;
-        }
-        break;
-
-    case IPS_TCP_SYN_RECV:
+    case IPS_TCP_STATE_NEW:
+        /* Connection established when we see data or ACK after SYN */
         if (tcp_flags & TCP_FLAG_ACK)
         {
-            *state = IPS_TCP_ESTABLISHED;
-        }
-        break;
-
-    case IPS_TCP_ESTABLISHED:
-        if (tcp_flags & TCP_FLAG_FIN)
-        {
-            *state = IPS_TCP_FIN_WAIT1;
+            *state = IPS_TCP_STATE_ESTABLISHED;
         }
         else if (tcp_flags & TCP_FLAG_RST)
         {
-            *state = IPS_TCP_CLOSED;
+            *state = IPS_TCP_STATE_CLOSED;
         }
         break;
 
-    case IPS_TCP_FIN_WAIT1:
-        if (tcp_flags & TCP_FLAG_ACK)
-        {
-            *state = IPS_TCP_FIN_WAIT2;
-        }
-        break;
-
-    case IPS_TCP_FIN_WAIT2:
+    case IPS_TCP_STATE_ESTABLISHED:
+        /* Connection closing when we see FIN or RST */
         if (tcp_flags & TCP_FLAG_FIN)
         {
-            *state = IPS_TCP_TIME_WAIT;
+            *state = IPS_TCP_STATE_CLOSING;
+        }
+        else if (tcp_flags & TCP_FLAG_RST)
+        {
+            *state = IPS_TCP_STATE_CLOSED;
+        }
+        break;
+
+    case IPS_TCP_STATE_CLOSING:
+        /* Connection closed when we see final ACK or RST */
+        if (tcp_flags & (TCP_FLAG_ACK | TCP_FLAG_RST))
+        {
+            *state = IPS_TCP_STATE_CLOSED;
+        }
+        break;
+
+    case IPS_TCP_STATE_CLOSED:
+        /* Allow reuse: new SYN on closed connection */
+        if (tcp_flags & TCP_FLAG_SYN)
+        {
+            *state = IPS_TCP_STATE_NEW;
         }
         break;
 

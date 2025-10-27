@@ -19,9 +19,12 @@
 #include <vppinfra/clib.h>
 #include <vppinfra/mem.h>
 
+#include "../ips.h"
 #include "ips_acl.h"
 #include "session/ips_session.h"
 #include "../block/ips_block.h"
+
+
 
 /* Note: VPP ACL API integration uses the exported_types.h interface */
 /* #include <vlibmemory/api.h> */
@@ -35,6 +38,9 @@
 
 /* Global ACL manager instance */
 ips_acl_manager_t ips_acl_manager;
+
+/* Forward declaration */
+int ips_acl_apply_to_interface(u32 sw_if_index);
 
 /**
  * @brief Initialize TCP state tracking table
@@ -684,10 +690,35 @@ ips_acl_check_packet(u32 thread_index, ips_session_t *session,
     stats = &am->per_thread_stats[thread_index];
     stats->total_packets_checked++;
 
-    /* Check against VPP ACL if available */
-    if (am->acl_plugin_loaded && session && (ip4 || ip6))
+    /* Check against VPP ACL if available
+     * Note: session can be NULL for SYN/SYN-ACK packets (new connections)
+     * In that case, we match directly against packet headers */
+    if (am->acl_plugin_loaded && (ip4 || ip6))
     {
+        /* Validate thread context */
+        if (thread_index >= vec_len(am->per_thread_contexts))
+        {
+            clib_warning("Invalid thread_index %u (max: %u)", thread_index, vec_len(am->per_thread_contexts));
+            *action = IPS_ACL_ACTION_PERMIT;
+            return 0;
+        }
+        
         ips_acl_context_t *ctx = &am->per_thread_contexts[thread_index];
+        
+        if (!ctx || !ctx->initialized || ctx->context_id < 0)
+        {
+            /* Context not ready */
+            *action = IPS_ACL_ACTION_PERMIT;
+            return 0;
+        }
+        
+        if (vec_len(ctx->acl_list) == 0)
+        {
+            /* No ACLs configured */
+            *action = IPS_ACL_ACTION_PERMIT;
+            return 0;
+        }
+        
         if (ctx->initialized && ctx->context_id >= 0 && vec_len(ctx->acl_list) > 0)
         {
             /* Use VPP ACL plugin for packet matching */
@@ -699,27 +730,70 @@ ips_acl_check_packet(u32 thread_index, ips_session_t *session,
             u32 trace_bitmap = 0;
             int is_ip6 = (ip6 != NULL);
 
+            /* Determine packet direction relative to session
+             * ACL rules match session source, so we need to normalize packet to session direction */
+            u8 is_reverse_direction = 0;
+            if (session)
+            {
+                if (is_ip6)
+                {
+                    /* For IPv6: Check if packet src matches session src */
+                    is_reverse_direction = (ip6_address_compare(&ip6->src_address, &session->src_ip6) != 0);
+                }
+                else
+                {
+                    /* For IPv4: Check if packet src matches session src */
+                    is_reverse_direction = (ip4->src_address.as_u32 != session->src_ip4.as_u32);
+                }
+            }
+
             /* Fill 5-tuple for ACL matching
-             * Note: This requires access to vlib_buffer_t, but we only have headers.
-             * For now, we'll manually construct the 5-tuple from headers */
+             * If packet is in reverse direction (SYN-ACK), swap src/dst to match session direction */
             clib_memset(&pkt_5tuple, 0, sizeof(pkt_5tuple));
 
             if (is_ip6)
             {
-                ((fa_5tuple_t*)&pkt_5tuple)->ip6_addr[0] = ip6->src_address;
-                ((fa_5tuple_t*)&pkt_5tuple)->ip6_addr[1] = ip6->dst_address;
+                if (is_reverse_direction)
+                {
+                    /* Reverse: swap src<->dst to match session direction */
+                    ((fa_5tuple_t*)&pkt_5tuple)->ip6_addr[0] = ip6->dst_address;
+                    ((fa_5tuple_t*)&pkt_5tuple)->ip6_addr[1] = ip6->src_address;
+                }
+                else
+                {
+                    ((fa_5tuple_t*)&pkt_5tuple)->ip6_addr[0] = ip6->src_address;
+                    ((fa_5tuple_t*)&pkt_5tuple)->ip6_addr[1] = ip6->dst_address;
+                }
             }
             else
             {
-                ((fa_5tuple_t*)&pkt_5tuple)->ip4_addr[0] = ip4->src_address;
-                ((fa_5tuple_t*)&pkt_5tuple)->ip4_addr[1] = ip4->dst_address;
+                if (is_reverse_direction)
+                {
+                    /* Reverse: swap src<->dst to match session direction */
+                    ((fa_5tuple_t*)&pkt_5tuple)->ip4_addr[0] = ip4->dst_address;
+                    ((fa_5tuple_t*)&pkt_5tuple)->ip4_addr[1] = ip4->src_address;
+                }
+                else
+                {
+                    ((fa_5tuple_t*)&pkt_5tuple)->ip4_addr[0] = ip4->src_address;
+                    ((fa_5tuple_t*)&pkt_5tuple)->ip4_addr[1] = ip4->dst_address;
+                }
             }
 
-            /* Set L4 information */
+            /* Set L4 information (also swap if reverse direction) */
             if (tcp)
             {
-                ((fa_5tuple_t*)&pkt_5tuple)->l4.port[0] = tcp->src_port;
-                ((fa_5tuple_t*)&pkt_5tuple)->l4.port[1] = tcp->dst_port;
+                if (is_reverse_direction)
+                {
+                    /* Reverse: swap ports to match session direction */
+                    ((fa_5tuple_t*)&pkt_5tuple)->l4.port[0] = tcp->dst_port;
+                    ((fa_5tuple_t*)&pkt_5tuple)->l4.port[1] = tcp->src_port;
+                }
+                else
+                {
+                    ((fa_5tuple_t*)&pkt_5tuple)->l4.port[0] = tcp->src_port;
+                    ((fa_5tuple_t*)&pkt_5tuple)->l4.port[1] = tcp->dst_port;
+                }
                 ((fa_5tuple_t*)&pkt_5tuple)->l4.proto = IP_PROTOCOL_TCP;
                 ((fa_5tuple_t*)&pkt_5tuple)->pkt.is_ip6 = is_ip6;
                 ((fa_5tuple_t*)&pkt_5tuple)->pkt.l4_valid = 1;
@@ -732,6 +806,13 @@ ips_acl_check_packet(u32 thread_index, ips_session_t *session,
             }
 
             /* Perform ACL match */
+            if (!am->acl_methods.match_5tuple)
+            {
+                *action = IPS_ACL_ACTION_PERMIT;
+                return 0;
+            }
+            
+            /* Call VPP ACL plugin's match function */
             int match_result = am->acl_methods.match_5tuple(ctx->context_id, &pkt_5tuple,
                                                          is_ip6, &acl_action,
                                                          &acl_pos, &acl_match,
@@ -739,21 +820,36 @@ ips_acl_check_packet(u32 thread_index, ips_session_t *session,
 
             if (match_result)
             {
-                /* ACL matched - convert VPP ACL action to IPS ACL action */
+                /* ACL matched - convert VPP ACL action to IPS ACL action
+                 * VPP ACL plugin action encoding:
+                 * - action=0 → DENY
+                 * - action=1 → PERMIT  
+                 * - action=2 → REFLECT
+                 */
                 switch (acl_action)
                 {
-                case 0: /* Permit */
-                    *action = IPS_ACL_ACTION_PERMIT;
-                    stats->packets_permit++;
-                    return 0;
-
-                case 1:
-                default:
-                    /* Deny and other actions - treat as deny for safety */
+                case 0: /* Deny */
                     *action = IPS_ACL_ACTION_DENY;
                     stats->packets_denied++;
                     stats->sessions_blocked++;
+                    stats->acl_hits++;
+                    stats->acl_deny_hits++;
                     return 1;
+
+                case 1: /* Permit */
+                    *action = IPS_ACL_ACTION_PERMIT;
+                    stats->packets_permit++;
+                    stats->acl_hits++;
+                    stats->acl_permit_hits++;
+                    return 0;
+
+                case 2: /* Reflect */
+                default:
+                    /* Reflect and other actions - treat as permit for now */
+                    *action = IPS_ACL_ACTION_PERMIT;
+                    stats->packets_permit++;
+                    stats->acl_hits++;
+                    return 0;
                 }
             }
 
@@ -802,8 +898,9 @@ ips_acl_check_packet(u32 thread_index, ips_session_t *session,
                 }
 
                 ips_tcp_state_t current_state = ips_acl_update_tcp_state(&session_key, tcp, direction);
-                /* Update session state appropriately */
-                if (direction == 0)
+                
+                /* Update session state appropriately (only if session exists) */
+                if (session && direction == 0)
                 {
                     if (current_state == IPS_TCP_STATE_ESTABLISHED)
                         session->tcp_state_src = IPS_SESSION_STATE_ESTABLISHED;
@@ -899,30 +996,52 @@ ips_acl_create_vpp_rule(ips_acl_rule_t *ips_rule)
     if (!vm || !ips_rule)
         return ~0;
 
-    /* Build the ACL creation command */
+    /* Build the ACL creation command using VPP ACL plugin format
+     * Format: set acl-plugin acl <permit|deny> src <PREFIX> dst <PREFIX> [proto X] [sport X[-Y]] [dport X[-Y]]
+     * Note: Don't specify index - let VPP ACL plugin assign one automatically
+     */
+    const char *action_str = (ips_rule->action == IPS_ACL_ACTION_PERMIT || 
+                              ips_rule->action == IPS_ACL_ACTION_LOG) ? "permit" : "deny";
+    
     if (ips_rule->is_ipv6)
     {
         vec_reset_length(cmd);
-        cmd = format(cmd, "acl add %s ipv6 %U/%u %U/%u %u %u-%u %u-%u %u %u",
-                     (ips_rule->action == IPS_ACL_ACTION_PERMIT || ips_rule->action == IPS_ACL_ACTION_LOG) ? "permit" : "deny",
+        cmd = format(cmd, "set acl-plugin acl %s src %U/%u dst %U/%u",
+                     action_str,
                      format_ip6_address, &ips_rule->src_ip.ip6, ips_rule->src_prefixlen,
-                     format_ip6_address, &ips_rule->dst_ip.ip6, ips_rule->dst_prefixlen,
-                     ips_rule->protocol,
-                     ips_rule->src_port_start, ips_rule->src_port_end,
-                     ips_rule->dst_port_start, ips_rule->dst_port_end,
-                     ips_rule->tcp_flags_value, ips_rule->tcp_flags_mask);
+                     format_ip6_address, &ips_rule->dst_ip.ip6, ips_rule->dst_prefixlen);
+                     
+        /* Add protocol if specified */
+        if (ips_rule->protocol != 0)
+            cmd = format(cmd, " proto %u", ips_rule->protocol);
+            
+        /* Add source port range if specified */
+        if (ips_rule->src_port_start != 0 || ips_rule->src_port_end != 65535)
+            cmd = format(cmd, " sport %u-%u", ips_rule->src_port_start, ips_rule->src_port_end);
+            
+        /* Add destination port range if specified */
+        if (ips_rule->dst_port_start != 0 || ips_rule->dst_port_end != 65535)
+            cmd = format(cmd, " dport %u-%u", ips_rule->dst_port_start, ips_rule->dst_port_end);
     }
     else
     {
         vec_reset_length(cmd);
-        cmd = format(cmd, "acl add %s ipv4 %U/%u %U/%u %u %u-%u %u-%u %u %u",
-                     (ips_rule->action == IPS_ACL_ACTION_PERMIT || ips_rule->action == IPS_ACL_ACTION_LOG) ? "permit" : "deny",
+        cmd = format(cmd, "set acl-plugin acl %s src %U/%u dst %U/%u",
+                     action_str,
                      format_ip4_address, &ips_rule->src_ip.ip4, ips_rule->src_prefixlen,
-                     format_ip4_address, &ips_rule->dst_ip.ip4, ips_rule->dst_prefixlen,
-                     ips_rule->protocol,
-                     ips_rule->src_port_start, ips_rule->src_port_end,
-                     ips_rule->dst_port_start, ips_rule->dst_port_end,
-                     ips_rule->tcp_flags_value, ips_rule->tcp_flags_mask);
+                     format_ip4_address, &ips_rule->dst_ip.ip4, ips_rule->dst_prefixlen);
+                     
+        /* Add protocol if specified */
+        if (ips_rule->protocol != 0)
+            cmd = format(cmd, " proto %u", ips_rule->protocol);
+            
+        /* Add source port range if specified */
+        if (ips_rule->src_port_start != 0 || ips_rule->src_port_end != 65535)
+            cmd = format(cmd, " sport %u-%u", ips_rule->src_port_start, ips_rule->src_port_end);
+            
+        /* Add destination port range if specified */
+        if (ips_rule->dst_port_start != 0 || ips_rule->dst_port_end != 65535)
+            cmd = format(cmd, " dport %u-%u", ips_rule->dst_port_start, ips_rule->dst_port_end);
     }
 
     if (vec_len(cmd) == 0)
@@ -933,20 +1052,34 @@ ips_acl_create_vpp_rule(ips_acl_rule_t *ips_rule)
 
     clib_warning("Executing VPP ACL command: %s", cmd);
 
-    /* Execute the command via VPP CLI - temporarily disabled for compilation */
-    /* ret = vlib_cli_execute(vm, (char *)cmd); */
-    ret = 0; /* Temporary: simulate success */
-    vec_free(cmd);
+    /* Execute the command via VPP CLI to create ACL
+     * Note: unformat_init_vector takes ownership of the cmd vector,
+     * so we don't need to free it manually after this point.
+     */
+    unformat_input_t cli_input;
+    unformat_init_vector(&cli_input, cmd);
+    
+    /* Use vlib_cli_input to execute the ACL command */
+    ret = vlib_cli_input(vm, &cli_input, 0, 0);
+    
+    /* unformat_free will free the cmd vector */
+    unformat_free(&cli_input);
 
     if (ret == 0)
     {
-        static u32 next_acl_index = 1000;
-        acl_index = next_acl_index++;
-        clib_warning("VPP ACL rule created successfully, assigned index: %u", acl_index);
+        /* ACL was created successfully
+         * VPP ACL plugin automatically assigns an index starting from 0
+         * We track the next expected index ourselves
+         */
+        static u32 next_expected_acl_index = 0;
+        acl_index = next_expected_acl_index++;
+        clib_warning("VPP ACL rule created successfully, expected index: %u", acl_index);
     }
     else
     {
-        clib_warning("Failed to create VPP ACL rule");
+        clib_warning("Failed to create VPP ACL rule, error code: %d", ret);
+        /* cmd was already freed by unformat_free above */
+        acl_index = ~0;
     }
 
     return acl_index;
@@ -1027,11 +1160,17 @@ ips_acl_add_rule(ips_acl_rule_t *rule)
         ips_acl_context_t *ctx = &am->per_thread_contexts[i];
         if (ctx->initialized)
         {
-            /* Add VPP ACL to context */
-            vec_add1(ctx->acl_list, new_rule->vpp_acl_index);
+            /* Add VPP ACL to context (use vpp_rule_index, not vpp_acl_index) */
+            vec_add1(ctx->acl_list, new_rule->vpp_rule_index);
             am->acl_methods.set_acl_vec_for_context(ctx->context_id, ctx->acl_list);
+            clib_warning("Updated lookup context %d for thread %u: added ACL %u (total: %u ACLs)",
+                        ctx->context_id, i, new_rule->vpp_rule_index, vec_len(ctx->acl_list));
         }
     }
+
+    /* Apply ACL to all enabled IPS interfaces
+     * Note: This will be called from ips_acl_cli.c which has access to interface list
+     */
 
     return new_rule->rule_id;
 }
@@ -1114,4 +1253,70 @@ int
 ips_acl_is_available(void)
 {
     return ips_acl_manager.acl_plugin_loaded;
+}
+
+/**
+ * @brief Apply all ACLs to an interface
+ * This function applies all created VPP ACL rules to the specified interface
+ */
+int
+ips_acl_apply_to_interface(u32 sw_if_index)
+{
+    ips_acl_manager_t *am = &ips_acl_manager;
+    vlib_main_t *vm = vlib_get_main();
+    
+    if (!am->acl_plugin_loaded || !vm)
+        return -1;
+    
+    /* Build list of ACL indices */
+    u32 *acl_indices = 0;
+    ips_acl_rule_t *rule;
+    
+    /* Collect all VPP ACL indices from IPS rules */
+    pool_foreach(rule, am->ips_rules)
+    {
+        if (rule->enabled)
+        {
+            vec_add1(acl_indices, rule->vpp_rule_index);
+        }
+    }
+    
+    if (vec_len(acl_indices) == 0)
+    {
+        clib_warning("No ACL rules to apply to interface %u", sw_if_index);
+        vec_free(acl_indices);
+        return 0;
+    }
+    
+    /* Build command to apply ACLs to interface
+     * Format: set acl-plugin interface sw_if_index input <acl1> <acl2> ...
+     */
+    u8 *cmd = format(0, "set acl-plugin interface sw_if_index %u input", sw_if_index);
+    
+    for (u32 i = 0; i < vec_len(acl_indices); i++)
+    {
+        cmd = format(cmd, " %u", acl_indices[i]);
+    }
+    
+    clib_warning("Applying ACLs to interface %u: %s", sw_if_index, cmd);
+    
+    /* Execute the command */
+    unformat_input_t cli_input;
+    unformat_init_vector(&cli_input, cmd);
+    
+    int ret = vlib_cli_input(vm, &cli_input, 0, 0);
+    unformat_free(&cli_input);
+    
+    if (ret != 0)
+    {
+        clib_warning("Failed to apply ACLs to interface %u, error: %d", sw_if_index, ret);
+        vec_free(acl_indices);
+        return -1;
+    }
+    
+    clib_warning("Successfully applied %u ACL rules to interface %u", 
+                 vec_len(acl_indices), sw_if_index);
+    
+    vec_free(acl_indices);
+    return 0;
 }

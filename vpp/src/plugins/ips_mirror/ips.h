@@ -110,6 +110,32 @@ typedef enum
     IPS_ACTION_LOG,
 } ips_action_t;
 
+/* Simplified TCP State Definitions - Adapted for Mirror Traffic
+ * In mirror mode, we see bidirectional traffic simultaneously,
+ * so we don't need to distinguish between SYN_SENT and SYN_RECV */
+#ifndef IPS_TCP_STATE_T_DEFINED
+#define IPS_TCP_STATE_T_DEFINED
+typedef enum
+{
+    IPS_TCP_STATE_NONE = 0,           /* 无状态/初始状态 */
+    IPS_TCP_STATE_NEW,                /* 新连接 (看到 SYN) */
+    IPS_TCP_STATE_ESTABLISHED,        /* 已建立连接 (看到 SYN+ACK 或数据包) */
+    IPS_TCP_STATE_CLOSING,            /* 连接关闭中 (看到 FIN) */
+    IPS_TCP_STATE_CLOSED,             /* 连接已关闭 (看到 RST 或双向 FIN) */
+} ips_tcp_state_t;
+
+/* Legacy compatibility - all map to simplified states */
+#define IPS_TCP_NONE          IPS_TCP_STATE_NONE
+#define IPS_TCP_SYN_SENT      IPS_TCP_STATE_NEW
+#define IPS_TCP_SYN_RECV      IPS_TCP_STATE_NEW
+#define IPS_TCP_ESTABLISHED   IPS_TCP_STATE_ESTABLISHED
+#define IPS_TCP_FIN_WAIT1     IPS_TCP_STATE_CLOSING
+#define IPS_TCP_FIN_WAIT2     IPS_TCP_STATE_CLOSING
+#define IPS_TCP_TIME_WAIT     IPS_TCP_STATE_CLOSING
+#define IPS_TCP_CLOSED        IPS_TCP_STATE_CLOSED
+#endif /* IPS_TCP_STATE_T_DEFINED */
+
+
 /* Rule flags */
 #define IPS_RULE_FLAG_ENABLED (1 << 0)
 #define IPS_RULE_FLAG_NOCASE (1 << 1)
@@ -122,23 +148,6 @@ typedef enum
 #define IPS_DETECTION_FLAG_REJECT (1 << 2)
 #define IPS_DETECTION_FLAG_LOG (1 << 3)
 
-/* TCP states based on Suricata implementation */
-typedef enum
-{
-    IPS_TCP_NONE = 0,
-    IPS_TCP_LISTEN,
-    IPS_TCP_SYN_SENT,
-    IPS_TCP_SYN_RECV,
-    IPS_TCP_ESTABLISHED,
-    IPS_TCP_FIN_WAIT1,
-    IPS_TCP_FIN_WAIT2,
-    IPS_TCP_TIME_WAIT,
-    IPS_TCP_CLOSE,
-    IPS_TCP_CLOSE_WAIT,
-    IPS_TCP_LAST_ACK,
-    IPS_TCP_CLOSING,
-    IPS_TCP_CLOSED,
-} ips_tcp_state_t;
 
 /* Flow flags */
 #define IPS_FLOW_FLAG_ESTABLISHED   (1 << 0)
@@ -698,5 +707,6 @@ extern vlib_node_registration_t ips_input_node;
 /* Format functions */
 format_function_t format_ips_flow_key;
 format_function_t format_ips_rule;
+
 
 #endif /* __included_ips_h__ */

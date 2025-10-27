@@ -17,6 +17,8 @@
 #include <vppinfra/pool.h>
 #include <vppinfra/vec.h>
 
+#include "../ips.h"
+
 #include "session/ips_session.h"
 
 /* Include ACL plugin exports */
@@ -31,15 +33,6 @@ typedef enum
     IPS_ACL_ACTION_LOG,
 } ips_acl_action_t;
 
-/* Simplified TCP State Definitions - Adapted for Mirror Traffic */
-typedef enum
-{
-    IPS_TCP_STATE_NONE = 0,           /* 无状态/初始状态 */
-    IPS_TCP_STATE_NEW,               /* 新连接 (SYN 或 SYN-ACK) */
-    IPS_TCP_STATE_ESTABLISHED,       /* 已建立连接 */
-    IPS_TCP_STATE_CLOSING,           /* 连接关闭中 (FIN/RST) */
-    IPS_TCP_STATE_CLOSED,            /* 连接已关闭 */
-} ips_tcp_state_t;
 
 /* TCP Flag Definitions */
 #define IPS_TCP_FLAG_FIN  0x01
@@ -140,12 +133,14 @@ typedef struct
     u64 total_packets_checked;         /* Total packets checked */
     u64 packets_denied;                /* Packets denied */
     u64 packets_reset;                 /* Packets reset */
-    u64 packets_permit;                /* Packets permitted */
+    u64 packets_permit;                /* Packets permitted (includes default permit) */
     u64 sessions_blocked;              /* Sessions blocked */
     u64 acl_errors;                    /* ACL errors */
 
     /* Extended statistics */
-    u64 acl_hits;                      /* VPP ACL rule hits */
+    u64 acl_hits;                      /* Total VPP ACL rule hits (permit + deny) */
+    u64 acl_deny_hits;                 /* VPP ACL deny rule hits */
+    u64 acl_permit_hits;               /* VPP ACL permit rule hits */
     u64 tcp_state_hits;                /* TCP state based blocks */
     u64 session_cache_hits;            /* Session cache hits */
     u64 syn_packets_blocked;           /* SYN packets blocked */

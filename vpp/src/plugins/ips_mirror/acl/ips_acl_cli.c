@@ -13,8 +13,10 @@
 #include <vnet/ip/ip46_address.h>
 #include <arpa/inet.h>
 
+#include "../ips.h"
 #include "ips_acl.h"
 /* #include "session/ips_session.h" - Not used in this file */
+
 
 
 /* Helper function to parse TCP state - Simplified for mirror traffic */
@@ -38,30 +40,32 @@ parse_tcp_state(unformat_input_t *input, ips_tcp_state_t *tcp_state)
 }
 
 /* Helper function to parse ACL action */
-static int
-parse_acl_action(unformat_input_t *input, ips_acl_action_t *action)
+static uword
+parse_acl_action(unformat_input_t *input, va_list *args)
 {
+    ips_acl_action_t *action = va_arg (*args, ips_acl_action_t *);
+    
     if (unformat(input, "permit"))
     {
         *action = IPS_ACL_ACTION_PERMIT;
-        return 0;
+        return 1;
     }
     else if (unformat(input, "deny"))
     {
         *action = IPS_ACL_ACTION_DENY;
-        return 0;
+        return 1;
     }
     else if (unformat(input, "reset"))
     {
         *action = IPS_ACL_ACTION_RESET;
-        return 0;
+        return 1;
     }
     else if (unformat(input, "log"))
     {
         *action = IPS_ACL_ACTION_LOG;
-        return 0;
+        return 1;
     }
-    return -1;
+    return 0;
 }
 
 /**
@@ -80,11 +84,21 @@ ips_acl_add_rule_command_fn(vlib_main_t *vm,
     u8 have_src_ip = 0, have_dst_ip = 0;
     u8 is_ipv4 = 0, is_ipv6 = 0;
 
-    /* Parse source IP */
-    if (unformat(input, "src %U", unformat_ip4_address, &rule.src_ip.ip4))
+    /* Parse source IP with optional CIDR prefix */
+    if (unformat(input, "src %U/%d", unformat_ip4_address, &rule.src_ip.ip4, &rule.src_prefixlen))
+    {
+        is_ipv4 = 1;
+        have_src_ip = 1;
+    }
+    else if (unformat(input, "src %U", unformat_ip4_address, &rule.src_ip.ip4))
     {
         is_ipv4 = 1;
         rule.src_prefixlen = 32; /* Default to single host */
+        have_src_ip = 1;
+    }
+    else if (unformat(input, "src %U/%d", unformat_ip6_address, &rule.src_ip.ip6, &rule.src_prefixlen))
+    {
+        is_ipv6 = 1;
         have_src_ip = 1;
     }
     else if (unformat(input, "src %U", unformat_ip6_address, &rule.src_ip.ip6))
@@ -94,11 +108,21 @@ ips_acl_add_rule_command_fn(vlib_main_t *vm,
         have_src_ip = 1;
     }
 
-    /* Parse destination IP and port */
-    if (unformat(input, "dst %U", unformat_ip4_address, &rule.dst_ip.ip4))
+    /* Parse destination IP with optional CIDR prefix */
+    if (unformat(input, "dst %U/%d", unformat_ip4_address, &rule.dst_ip.ip4, &rule.dst_prefixlen))
+    {
+        is_ipv4 = 1;
+        have_dst_ip = 1;
+    }
+    else if (unformat(input, "dst %U", unformat_ip4_address, &rule.dst_ip.ip4))
     {
         is_ipv4 = 1;
         rule.dst_prefixlen = 32; /* Default to single host */
+        have_dst_ip = 1;
+    }
+    else if (unformat(input, "dst %U/%d", unformat_ip6_address, &rule.dst_ip.ip6, &rule.dst_prefixlen))
+    {
+        is_ipv6 = 1;
         have_dst_ip = 1;
     }
     else if (unformat(input, "dst %U", unformat_ip6_address, &rule.dst_ip.ip6))
@@ -278,6 +302,10 @@ ips_acl_add_rule_command_fn(vlib_main_t *vm,
     if (rule_id == ~0)
         return clib_error_return(0, "Failed to add ACL rule");
 
+    /* Apply ACL to all enabled IPS interfaces */
+    extern void ips_apply_acls_to_all_interfaces(void);
+    ips_apply_acls_to_all_interfaces();
+
     vlib_cli_output(vm, "ACL rule added successfully with ID %u", rule_id);
     return 0;
 }
@@ -349,38 +377,108 @@ ips_acl_show_stats_command_fn(vlib_main_t *vm,
     /* Suppress unused parameter warning */
     (void)cmd;
 
-    u32 thread_index = 0;
-    ips_acl_stats_t stats;
+    u32 thread_index = ~0;  /* ~0 means show all threads */
+    u8 show_specific_thread = 0;
 
-    unformat(input, "thread %u", &thread_index);
+    if (unformat(input, "thread %u", &thread_index))
+    {
+        show_specific_thread = 1;
+    }
 
-    ips_acl_get_stats(thread_index, &stats);
+    if (show_specific_thread)
+    {
+        /* Show specific thread statistics */
+        ips_acl_stats_t stats;
+        ips_acl_get_stats(thread_index, &stats);
 
-    vlib_cli_output(vm, "IPS ACL Statistics (thread %u):", thread_index);
-    vlib_cli_output(vm, "  Total packets checked: %lu", stats.total_packets_checked);
-    vlib_cli_output(vm, "  Packets permitted:    %lu", stats.packets_permit);
-    vlib_cli_output(vm, "  Packets denied:       %lu", stats.packets_denied);
-    vlib_cli_output(vm, "  Packets reset:        %lu", stats.packets_reset);
-    vlib_cli_output(vm, "  Sessions blocked:     %lu", stats.sessions_blocked);
-    vlib_cli_output(vm, "  ACL errors:           %lu", stats.acl_errors);
+        vlib_cli_output(vm, "IPS ACL Statistics (thread %u):", thread_index);
+        vlib_cli_output(vm, "  Total packets checked: %lu", stats.total_packets_checked);
+        vlib_cli_output(vm, "  Packets permitted:    %lu", stats.packets_permit);
+        vlib_cli_output(vm, "  Packets denied:       %lu", stats.packets_denied);
+        vlib_cli_output(vm, "  Packets reset:        %lu", stats.packets_reset);
+        vlib_cli_output(vm, "  Sessions blocked:     %lu", stats.sessions_blocked);
+        vlib_cli_output(vm, "  ACL errors:           %lu", stats.acl_errors);
+        vlib_cli_output(vm, "  VPP ACL rule hits:    %lu (deny: %lu, permit: %lu)", 
+                       stats.acl_hits, stats.acl_deny_hits, stats.acl_permit_hits);
+        vlib_cli_output(vm, "  TCP state hits:       %lu", stats.tcp_state_hits);
+        vlib_cli_output(vm, "  Session cache hits:   %lu", stats.session_cache_hits);
+        vlib_cli_output(vm, "  SYN packets blocked:  %lu", stats.syn_packets_blocked);
+        vlib_cli_output(vm, "  SYN-ACK packets blocked: %lu", stats.synack_packets_blocked);
 
-    /* Extended statistics */
-    vlib_cli_output(vm, "  VPP ACL rule hits:    %lu", stats.acl_hits);
-    vlib_cli_output(vm, "  TCP state hits:       %lu", stats.tcp_state_hits);
-    vlib_cli_output(vm, "  Session cache hits:   %lu", stats.session_cache_hits);
-    vlib_cli_output(vm, "  SYN packets blocked:  %lu", stats.syn_packets_blocked);
-    vlib_cli_output(vm, "  SYN-ACK packets blocked: %lu", stats.synack_packets_blocked);
+        /* Calculate hit rates */
+        if (stats.total_packets_checked > 0) {
+            f64 total_packets = (f64)stats.total_packets_checked;
+            f64 acl_hit_rate = (f64)stats.acl_hits / total_packets * 100.0;
+            f64 cache_hit_rate = (f64)stats.session_cache_hits / total_packets * 100.0;
+            f64 tcp_state_rate = (f64)stats.tcp_state_hits / total_packets * 100.0;
 
-    /* Calculate hit rates */
-    if (stats.total_packets_checked > 0) {
-        f64 total_packets = (f64)stats.total_packets_checked;
-        f64 acl_hit_rate = (f64)stats.acl_hits / total_packets * 100.0;
-        f64 cache_hit_rate = (f64)stats.session_cache_hits / total_packets * 100.0;
-        f64 tcp_state_rate = (f64)stats.tcp_state_hits / total_packets * 100.0;
+            vlib_cli_output(vm, "  ACL hit rate:         %.2f%%", acl_hit_rate);
+            vlib_cli_output(vm, "  Cache hit rate:       %.2f%%", cache_hit_rate);
+            vlib_cli_output(vm, "  TCP state hit rate:   %.2f%%", tcp_state_rate);
+        }
+    }
+    else
+    {
+        /* Show aggregated statistics across all threads */
+        ips_acl_manager_t *am = &ips_acl_manager;
+        ips_acl_stats_t total_stats = {0};
 
-        vlib_cli_output(vm, "  ACL hit rate:         %.2f%%", acl_hit_rate);
-        vlib_cli_output(vm, "  Cache hit rate:       %.2f%%", cache_hit_rate);
-        vlib_cli_output(vm, "  TCP state hit rate:   %.2f%%", tcp_state_rate);
+        vlib_cli_output(vm, "IPS ACL Statistics (all threads):");
+        vlib_cli_output(vm, "");
+
+        /* Aggregate stats from all threads */
+        for (u32 i = 0; i < vec_len(am->per_thread_stats); i++)
+        {
+            ips_acl_stats_t *stats = &am->per_thread_stats[i];
+            total_stats.total_packets_checked += stats->total_packets_checked;
+            total_stats.packets_permit += stats->packets_permit;
+            total_stats.packets_denied += stats->packets_denied;
+            total_stats.packets_reset += stats->packets_reset;
+            total_stats.sessions_blocked += stats->sessions_blocked;
+            total_stats.acl_errors += stats->acl_errors;
+            total_stats.acl_hits += stats->acl_hits;
+            total_stats.acl_deny_hits += stats->acl_deny_hits;
+            total_stats.acl_permit_hits += stats->acl_permit_hits;
+            total_stats.tcp_state_hits += stats->tcp_state_hits;
+            total_stats.session_cache_hits += stats->session_cache_hits;
+            total_stats.syn_packets_blocked += stats->syn_packets_blocked;
+            total_stats.synack_packets_blocked += stats->synack_packets_blocked;
+
+            /* Show per-thread if it has activity */
+            if (stats->total_packets_checked > 0)
+            {
+                vlib_cli_output(vm, "Thread %u:", i);
+                vlib_cli_output(vm, "  Packets checked: %lu, denied: %lu, VPP ACL hits: %lu",
+                              stats->total_packets_checked, stats->packets_denied, stats->acl_hits);
+            }
+        }
+
+        vlib_cli_output(vm, "");
+        vlib_cli_output(vm, "Global Totals:");
+        vlib_cli_output(vm, "  Total packets checked: %lu", total_stats.total_packets_checked);
+        vlib_cli_output(vm, "  Packets permitted:    %lu", total_stats.packets_permit);
+        vlib_cli_output(vm, "  Packets denied:       %lu", total_stats.packets_denied);
+        vlib_cli_output(vm, "  Packets reset:        %lu", total_stats.packets_reset);
+        vlib_cli_output(vm, "  Sessions blocked:     %lu", total_stats.sessions_blocked);
+        vlib_cli_output(vm, "  ACL errors:           %lu", total_stats.acl_errors);
+        vlib_cli_output(vm, "  VPP ACL rule hits:    %lu (deny: %lu, permit: %lu)", 
+                       total_stats.acl_hits, total_stats.acl_deny_hits, total_stats.acl_permit_hits);
+        vlib_cli_output(vm, "  TCP state hits:       %lu", total_stats.tcp_state_hits);
+        vlib_cli_output(vm, "  Session cache hits:   %lu", total_stats.session_cache_hits);
+        vlib_cli_output(vm, "  SYN packets blocked:  %lu", total_stats.syn_packets_blocked);
+        vlib_cli_output(vm, "  SYN-ACK packets blocked: %lu", total_stats.synack_packets_blocked);
+
+        /* Calculate hit rates */
+        if (total_stats.total_packets_checked > 0) {
+            f64 total_packets = (f64)total_stats.total_packets_checked;
+            f64 acl_hit_rate = (f64)total_stats.acl_hits / total_packets * 100.0;
+            f64 cache_hit_rate = (f64)total_stats.session_cache_hits / total_packets * 100.0;
+            f64 tcp_state_rate = (f64)total_stats.tcp_state_hits / total_packets * 100.0;
+
+            vlib_cli_output(vm, "  ACL hit rate:         %.2f%%", acl_hit_rate);
+            vlib_cli_output(vm, "  Cache hit rate:       %.2f%%", cache_hit_rate);
+            vlib_cli_output(vm, "  TCP state hit rate:   %.2f%%", tcp_state_rate);
+        }
     }
 
     return 0;

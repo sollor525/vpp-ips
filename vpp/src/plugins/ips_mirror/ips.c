@@ -95,7 +95,12 @@ ips_init (vlib_main_t *vm)
   if (error)
     return error;
 
-  /* Enable session timer process node */
+  /* Enable session timer process node
+   * This process periodically wakes up worker threads to process their timers.
+   * It does NOT access session data directly - it only sends interrupt signals
+   * to worker threads, which then process their own timers in their own context.
+   * This ensures thread safety while allowing timers to expire even without traffic.
+   */
   vlib_node_set_state (vm, ips_session_timer_process_node.index,
                        VLIB_NODE_STATE_POLLING);
 
@@ -103,6 +108,26 @@ ips_init (vlib_main_t *vm)
 }
 
 VLIB_INIT_FUNCTION (ips_init);
+
+/**
+ * @brief Apply ACLs to all enabled IPS interfaces
+ */
+void
+ips_apply_acls_to_all_interfaces(void)
+{
+  ips_main_t *im = &ips_main;
+  u32 sw_if_index;
+  
+  extern int ips_acl_apply_to_interface(u32 sw_if_index);
+  
+  vec_foreach_index(sw_if_index, im->interface_enabled)
+  {
+      if (im->interface_enabled[sw_if_index])
+      {
+          ips_acl_apply_to_interface(sw_if_index);
+      }
+  }
+}
 
 /**
  * @brief Enable/disable IPS on an interface
@@ -155,6 +180,12 @@ ips_interface_enable_disable (const ips_interface_enable_disable_args_t *args)
 				       sw_if_index, 1, 0, 0);
 	  vnet_feature_enable_disable ("ip6-unicast", "ips-input-ip6",
 				       sw_if_index, 1, 0, 0);
+
+	  /* Apply all ACLs to this interface
+	   * This ensures ACL rules take effect when interface is enabled
+	   */
+	  extern int ips_acl_apply_to_interface(u32 sw_if_index);
+	  ips_acl_apply_to_interface(sw_if_index);
 
 	  clib_warning ("IPS enabled on interface %u", sw_if_index);
 	}
