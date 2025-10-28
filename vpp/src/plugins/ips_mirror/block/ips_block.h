@@ -97,6 +97,10 @@ typedef struct
     u8 enable_logging;                /* Enable blocking logging */
     u8 rate_limit_enabled;            /* Enable rate limiting */
     u32 max_blocks_per_second;        /* Max blocks per second per thread */
+    
+    /* Interface configuration for sending block packets */
+    u32 block_tx_sw_if_index;         /* Interface to send block packets (default: same as RX) */
+    u8 use_rx_interface;              /* If true, send on same interface as RX (default) */
 
     /* Rate limiting state */
     u32 *block_counters;              /* Per-thread block counters */
@@ -128,6 +132,9 @@ int ips_block_send(const ips_block_request_t *request);
 /**
  * @brief Send TCP reset packet
  * @param thread_index Thread index
+ * @param sw_if_index Interface to send reset (TX interface's MAC will be used as source)
+ * @param src_mac IGNORED (kept for API compatibility, src MAC is always TX interface's MAC)
+ * @param dst_mac Destination MAC (from original packet's src MAC, or NULL for broadcast)
  * @param session IPS session (optional)
  * @param ip4 IPv4 header (optional)
  * @param ip6 IPv6 header (optional)
@@ -135,8 +142,12 @@ int ips_block_send(const ips_block_request_t *request);
  * @param is_reply Send in reverse direction
  * @param reason Blocking reason
  * @return 0 on success, -1 on error
+ * 
+ * Note: Source MAC is automatically obtained from TX interface to prevent MAC flapping
  */
-int ips_block_send_tcp_reset(u32 thread_index, ips_session_t *session,
+int ips_block_send_tcp_reset(u32 thread_index, u32 sw_if_index,
+                             u8 *src_mac, u8 *dst_mac,
+                             ips_session_t *session,
                              ip4_header_t *ip4, ip6_header_t *ip6,
                              tcp_header_t *tcp, u8 is_reply,
                              ips_block_reason_t reason);
@@ -238,5 +249,18 @@ void ips_block_node_get_stats(u32 thread_index, ips_block_node_stats_t *stats);
  * @param thread_index Thread index
  */
 void ips_block_node_reset_stats(u32 thread_index);
+
+/**
+ * @brief Set interface for sending block packets
+ * @param sw_if_index Interface index (or ~0 to use RX interface)
+ * @return 0 on success, -1 on error
+ */
+int ips_block_set_tx_interface(u32 sw_if_index);
+
+/**
+ * @brief Get configured TX interface for block packets
+ * @return sw_if_index or ~0 if using RX interface
+ */
+u32 ips_block_get_tx_interface(void);
 
 #endif /* __IPS_BLOCK_H__ */

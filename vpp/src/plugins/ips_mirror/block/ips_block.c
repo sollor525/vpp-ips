@@ -76,6 +76,10 @@ ips_block_init(vlib_main_t *vm)
     bm->enable_logging = 1;
     bm->rate_limit_enabled = 1;
     bm->max_blocks_per_second = 1000; /* 1000 blocks/sec per thread */
+    
+    /* Default: use RX interface for sending block packets */
+    bm->use_rx_interface = 1;
+    bm->block_tx_sw_if_index = ~0;
 
     clib_warning("IPS blocking module initialized successfully");
     return 0;
@@ -128,9 +132,13 @@ ips_block_is_rate_limited(u32 thread_index)
 
 /**
  * @brief Send TCP reset packet (internal implementation)
+ * @param sw_if_index - interface to send the reset packet out
+ * @param src_mac - IGNORED (kept for API compatibility, src MAC is always TX interface's MAC)
+ * @param dst_mac - destination MAC address (from original packet's src MAC, or NULL for broadcast)
  */
 static int
-ips_block_send_tcp_reset_internal(u32 thread_index,
+ips_block_send_tcp_reset_internal(u32 thread_index, u32 sw_if_index,
+                                u8 * __clib_unused src_mac, u8 *dst_mac,
                                 ip4_header_t *ip4, ip6_header_t *ip6,
                                 tcp_header_t *tcp, u8 is_reply,
                                 ips_block_reason_t reason)
@@ -151,20 +159,53 @@ ips_block_send_tcp_reset_internal(u32 thread_index,
     b = vlib_get_buffer(vm, bi);
     vlib_buffer_reset(b);
 
-    /* Calculate packet size */
+    /* Calculate packet size (Ethernet + IP + TCP) */
+    u32 eth_len = sizeof(ethernet_header_t);
     if (is_ipv6)
         ip_len = sizeof(ip6_header_t) + tcp_len;
     else
         ip_len = sizeof(ip4_header_t) + tcp_len;
 
-    /* Set packet data */
-    vlib_buffer_make_headroom(b, sizeof(ethernet_header_t));
-    b->current_length = ip_len;
+    /* Set packet data - include Ethernet header */
+    b->current_length = eth_len + ip_len;
+    
+    /* Set up Ethernet header */
+    ethernet_header_t *eth = vlib_buffer_get_current(b);
+    clib_memset(eth, 0, sizeof(ethernet_header_t));
+    
+    /* Get TX interface's MAC address as source */
+    vnet_main_t *vnm = vnet_get_main();
+    vnet_hw_interface_t *hw = vnet_get_sup_hw_interface(vnm, sw_if_index);
+    
+    if (!hw)
+    {
+        vlib_buffer_free(vm, &bi, 1);
+        return -1;
+    }
+    
+    /* Set MAC addresses:
+     * - Source: TX interface's own MAC (prevents MAC address flapping on switches)
+     * - Destination: Original packet's source MAC (if available) or broadcast
+     */
+    clib_memcpy(eth->src_address, hw->hw_address, 6);
+    
+    if (dst_mac)
+    {
+        clib_memcpy(eth->dst_address, dst_mac, 6);
+    }
+    else
+    {
+        /* If no destination MAC provided, use broadcast */
+        clib_memset(eth->dst_address, 0xff, 6);
+    }
+    
+    /* Set EtherType */
+    eth->type = clib_host_to_net_u16(is_ipv6 ? ETHERNET_TYPE_IP6 : ETHERNET_TYPE_IP4);
 
-    /* Set up pointers */
+    /* Set up pointers (skip Ethernet header) */
     if (is_ipv6)
     {
-        ip6_header_t *new_ip6 = vlib_buffer_get_current(b);
+        ip6_header_t *new_ip6 = (ip6_header_t *)(eth + 1);
         rst_tcp = (tcp_header_t *)(new_ip6 + 1);
         clib_memset(new_ip6, 0, sizeof(ip6_header_t));
 
@@ -172,6 +213,7 @@ ips_block_send_tcp_reset_internal(u32 thread_index,
         *new_ip6 = *ip6;
         new_ip6->payload_length = clib_host_to_net_u16(tcp_len);
         new_ip6->hop_limit = 255;
+        new_ip6->protocol = IP_PROTOCOL_TCP;
 
         if (is_reply)
         {
@@ -181,20 +223,26 @@ ips_block_send_tcp_reset_internal(u32 thread_index,
     }
     else
     {
-        ip4_header_t *new_ip4 = vlib_buffer_get_current(b);
+        ip4_header_t *new_ip4 = (ip4_header_t *)(eth + 1);
         rst_tcp = (tcp_header_t *)(new_ip4 + 1);
         clib_memset(new_ip4, 0, sizeof(ip4_header_t));
 
         /* Copy original IP4 header and modify */
         *new_ip4 = *ip4;
+        new_ip4->ip_version_and_header_length = 0x45; /* IPv4, 20 bytes */
         new_ip4->length = clib_host_to_net_u16(ip_len);
         new_ip4->ttl = 64;
+        new_ip4->protocol = IP_PROTOCOL_TCP;
+        new_ip4->checksum = 0;
 
         if (is_reply)
         {
             new_ip4->src_address = ip4->dst_address;
             new_ip4->dst_address = ip4->src_address;
         }
+        
+        /* Calculate IP checksum */
+        new_ip4->checksum = ip4_header_checksum(new_ip4);
     }
 
     /* Construct TCP RST header */
@@ -224,18 +272,21 @@ ips_block_send_tcp_reset_internal(u32 thread_index,
     rst_tcp->checksum = 0; /* Will be calculated by IP layer */
 
     /* Set buffer metadata */
-    b->current_length = ip_len;
+    b->current_length = eth_len + ip_len;
     b->flags |= VLIB_BUFFER_TOTAL_LENGTH_VALID;
     b->total_length_not_including_first_buffer = 0;
+    
+    /* Set sw_if_index for output interface */
+    vnet_buffer(b)->sw_if_index[VLIB_RX] = sw_if_index;
+    vnet_buffer(b)->sw_if_index[VLIB_TX] = sw_if_index;
 
-    /* Send packet to output */
+    /* Send packet directly to interface-output node (bypass IP lookup)
+     * This allows sending even when interface has no IP configured */
     vlib_frame_t *f;
     u32 *to_next;
-
-    if (is_ipv6)
-        next_index = ip6_lookup_node.index;
-    else
-        next_index = ip4_lookup_node.index;
+    
+    /* Get the interface output node (hw was already obtained above) */
+    next_index = hw->output_node_index;
 
     f = vlib_get_frame_to_node(vm, next_index);
     to_next = vlib_frame_vector_args(f);
@@ -248,9 +299,17 @@ ips_block_send_tcp_reset_internal(u32 thread_index,
 
 /**
  * @brief Send TCP reset packet
+ * @param sw_if_index - interface to send reset packet out (TX interface's MAC will be used as src)
+ * @param src_mac - IGNORED (kept for API compatibility, src MAC is always TX interface's MAC)
+ * @param dst_mac - destination MAC for reset packet (from original packet's src MAC, or NULL for broadcast)
+ * 
+ * Note: Source MAC is automatically obtained from the TX interface to prevent MAC address
+ * flapping on switches. The dst_mac should be the original packet's source MAC.
  */
 int
-ips_block_send_tcp_reset(u32 thread_index, ips_session_t *session,
+ips_block_send_tcp_reset(u32 thread_index, u32 sw_if_index,
+                        u8 * __clib_unused src_mac, u8 *dst_mac,
+                        ips_session_t *session,
                         ip4_header_t *ip4, ip6_header_t *ip6,
                         tcp_header_t *tcp, u8 is_reply,
                         ips_block_reason_t reason)
@@ -303,7 +362,7 @@ ips_block_send_tcp_reset(u32 thread_index, ips_session_t *session,
             session_tcp.ack_number = clib_host_to_net_u32(session->tcp_ack_dst);
         }
 
-        if (ips_block_send_tcp_reset_internal(thread_index,
+        if (ips_block_send_tcp_reset_internal(thread_index, sw_if_index, src_mac, dst_mac,
                                               session->is_ipv6 ? NULL : &session_ip4,
                                               session->is_ipv6 ? &session_ip6 : NULL,
                                               &session_tcp, is_reply, reason) == 0)
@@ -315,9 +374,9 @@ ips_block_send_tcp_reset(u32 thread_index, ips_session_t *session,
 
             if (bm->enable_logging)
             {
-                clib_warning("TCP reset sent: session=%u, reason=%s, reply=%u",
+                clib_warning("TCP reset sent: session=%u, reason=%s, reply=%u, sw_if_index=%u",
                            session->session_index,
-                           ips_block_reason_to_string(reason), is_reply);
+                           ips_block_reason_to_string(reason), is_reply, sw_if_index);
             }
             return 0;
         }
@@ -325,7 +384,8 @@ ips_block_send_tcp_reset(u32 thread_index, ips_session_t *session,
     else if (ip4 || ip6)
     {
         /* Use provided packet headers */
-        if (ips_block_send_tcp_reset_internal(thread_index, ip4, ip6, tcp, is_reply, reason) == 0)
+        if (ips_block_send_tcp_reset_internal(thread_index, sw_if_index, src_mac, dst_mac,
+                                              ip4, ip6, tcp, is_reply, reason) == 0)
         {
             stats->tcp_resets++;
             stats->total_blocks++;
@@ -334,8 +394,8 @@ ips_block_send_tcp_reset(u32 thread_index, ips_session_t *session,
 
             if (bm->enable_logging)
             {
-                clib_warning("TCP reset sent: reason=%s, reply=%u",
-                           ips_block_reason_to_string(reason), is_reply);
+                clib_warning("TCP reset sent: reason=%s, reply=%u, sw_if_index=%u",
+                           ips_block_reason_to_string(reason), is_reply, sw_if_index);
             }
             return 0;
         }
@@ -435,7 +495,13 @@ ips_block_send(const ips_block_request_t *request)
                 tcp.flags = request->tcp_flags;
             }
 
-            return ips_block_send_tcp_reset(request->thread_index, NULL,
+            /* Get configured TX interface */
+            ips_block_manager_t *bm = &ips_block_manager;
+            u32 sw_if_index = bm->use_rx_interface ? 0 : bm->block_tx_sw_if_index;
+            
+            return ips_block_send_tcp_reset(request->thread_index, sw_if_index,
+                                          NULL, NULL, /* MAC unknown */
+                                          NULL, /* no session */
                                           request->is_ipv6 ? NULL : &ip4,
                                           request->is_ipv6 ? &ip6 : NULL,
                                           &tcp, 0, request->reason);
@@ -591,4 +657,47 @@ ips_block_reason_to_string(ips_block_reason_t reason)
     if (reason < sizeof(reason_strings) / sizeof(reason_strings[0]))
         return reason_strings[reason];
     return "unknown";
+}
+
+/**
+ * @brief Set interface for sending block packets
+ */
+int
+ips_block_set_tx_interface(u32 sw_if_index)
+{
+    ips_block_manager_t *bm = &ips_block_manager;
+    vnet_main_t *vnm = vnet_get_main();
+    
+    if (sw_if_index == ~0)
+    {
+        /* Use RX interface (default) */
+        bm->use_rx_interface = 1;
+        bm->block_tx_sw_if_index = ~0;
+        clib_warning("Block packets will be sent on same interface as RX");
+        return 0;
+    }
+    
+    /* Validate interface exists */
+    if (!vnet_sw_interface_is_valid(vnm, sw_if_index))
+    {
+        clib_warning("Invalid interface index %u", sw_if_index);
+        return -1;
+    }
+    
+    /* Set specific TX interface */
+    bm->use_rx_interface = 0;
+    bm->block_tx_sw_if_index = sw_if_index;
+    clib_warning("Block packets will be sent on interface %u", sw_if_index);
+    
+    return 0;
+}
+
+/**
+ * @brief Get configured TX interface for block packets
+ */
+u32
+ips_block_get_tx_interface(void)
+{
+    ips_block_manager_t *bm = &ips_block_manager;
+    return bm->use_rx_interface ? ~0 : bm->block_tx_sw_if_index;
 }

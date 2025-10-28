@@ -46,6 +46,7 @@ set(IPS_SOURCES
   # Detection engine module
   detection/ips_detection_module.c
   detection/ips_detection_temp.c
+  detection/ips_inspect_node.c
   # Temporarily disabled due to Hyperscan dependency:
   # detection/ips_detection.c
   # detection/ips_detection_advanced.c
@@ -69,6 +70,10 @@ set(IPS_SOURCES
 #  common/ips_pcre_support.c          # Temporarily disabled
 #  common/ips_pcre_hyperscan.c        # Temporarily disabled
 #  common/ips_pcre_hyperscan_enhanced.c # Temporarily disabled
+
+  # Protocol detection module
+  protocols/ips_protocol_detection.c
+  protocols/ips_protocol_detect_node.c
 
   # Timer API - Temporarily disabled
   # ips_timer_api.c
@@ -147,6 +152,9 @@ target_include_directories(ips_plugin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/detection
     ${CMAKE_CURRENT_SOURCE_DIR}/rules
     ${CMAKE_CURRENT_SOURCE_DIR}/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocols
+    ${CMAKE_CURRENT_SOURCE_DIR}/block
+    ${CMAKE_CURRENT_SOURCE_DIR}/acl
 )
 
 # Create symbolic links to generated API files for IDE support

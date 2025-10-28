@@ -85,6 +85,12 @@ ips_init (vlib_main_t *vm)
   if (error)
     return error;
 
+  /* Initialize protocol detection module */
+  extern clib_error_t *ips_protocol_detection_init(void);
+  error = ips_protocol_detection_init();
+  if (error)
+    return error;
+
   /* Initialize blocking module */
   error = ips_block_init (vm);
   if (error)

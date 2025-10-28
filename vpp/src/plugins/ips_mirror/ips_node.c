@@ -49,6 +49,7 @@ typedef enum
     IPS_INPUT_NEXT_IP6_LOOKUP,
     IPS_INPUT_NEXT_ETHERNET_INPUT,
     IPS_INPUT_NEXT_BLOCK,
+    IPS_INPUT_NEXT_PROTOCOL_DETECT,  /* New: send to protocol detection node */
     IPS_INPUT_N_NEXT,
 } ips_input_next_t;
 
@@ -165,14 +166,16 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                             session->flags |= IPS_SESSION_FLAG_BLOCKED;
                         }
                         
-                        /* Check if session is blocked - if so, send to block node for TCP reset */
+                        /* Step 3: Determine next node based on ACL result */
                         if (session->flags & IPS_SESSION_FLAG_BLOCKED)
                         {
+                            /* ACL blocked - send to block node */
                             next0 = IPS_INPUT_NEXT_BLOCK;
                         }
                         else
                         {
-                            next0 = IPS_INPUT_NEXT_IP4_LOOKUP;
+                            /* ACL passed - send to protocol detection node for IPS inspection */
+                            next0 = IPS_INPUT_NEXT_PROTOCOL_DETECT;
                         }
                     }
                     else
@@ -209,14 +212,16 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                             session->flags |= IPS_SESSION_FLAG_BLOCKED;
                         }
                         
-                        /* Check if session is blocked - if so, send to block node for TCP reset */
+                        /* Step 3: Determine next node based on ACL result */
                         if (session->flags & IPS_SESSION_FLAG_BLOCKED)
                         {
+                            /* ACL blocked - send to block node */
                             next0 = IPS_INPUT_NEXT_BLOCK;
                         }
                         else
                         {
-                            next0 = IPS_INPUT_NEXT_IP6_LOOKUP;
+                            /* ACL passed - send to protocol detection node for IPS inspection */
+                            next0 = IPS_INPUT_NEXT_PROTOCOL_DETECT;
                         }
                     }
                     else
@@ -296,6 +301,7 @@ VLIB_REGISTER_NODE (ips_input_ip4_node) =
         [IPS_INPUT_NEXT_IP6_LOOKUP] = "ip6-lookup",
         [IPS_INPUT_NEXT_ETHERNET_INPUT] = "ethernet-input",
         [IPS_INPUT_NEXT_BLOCK] = "ips-block-node",
+        [IPS_INPUT_NEXT_PROTOCOL_DETECT] = "ips-protocol-detect",
     },
 };
 
@@ -316,6 +322,7 @@ VLIB_REGISTER_NODE (ips_input_ip6_node) =
         [IPS_INPUT_NEXT_IP6_LOOKUP] = "ip6-lookup",
         [IPS_INPUT_NEXT_ETHERNET_INPUT] = "ethernet-input",
         [IPS_INPUT_NEXT_BLOCK] = "ips-block-node",
+        [IPS_INPUT_NEXT_PROTOCOL_DETECT] = "ips-protocol-detect",
     },
 };
 

@@ -42,33 +42,12 @@ typedef enum
 static ips_block_node_stats_t *block_node_stats;
 
 /**
- * @brief Create TCP reset packet using public API
- */
-static int
-create_tcp_reset_packet (vlib_main_t * vm, vlib_buffer_t * __clib_unused b,
-                        ip4_header_t *ip4, ip6_header_t *ip6,
-                        tcp_header_t *tcp)
-{
-    /* Use public blocking module API */
-    if (ip4)
-    {
-        return ips_block_send_tcp_reset (vm->thread_index, NULL, ip4, NULL, tcp, 1, IPS_BLOCK_REASON_ACL);
-    }
-    else if (ip6)
-    {
-        return ips_block_send_tcp_reset (vm->thread_index, NULL, NULL, ip6, tcp, 1, IPS_BLOCK_REASON_ACL);
-    }
-
-    return -1;
-}
-
-/**
  * @brief Main blocking node function - simplified version
  */
 static uword
 ips_block_node_fn (vlib_main_t * vm,
-                  vlib_node_runtime_t * __clib_unused node,
-                  vlib_frame_t * frame)
+                   vlib_node_runtime_t * __clib_unused node,
+                   vlib_frame_t * frame)
 {
     u32 n_left_from, *from;
 
@@ -79,39 +58,74 @@ ips_block_node_fn (vlib_main_t * vm,
     {
         u32 bi0 = from[0];
         vlib_buffer_t *b0 = vlib_get_buffer (vm, bi0);
+        u32 sw_if_index = vnet_buffer(b0)->sw_if_index[VLIB_RX];
 
-        /* Get packet headers */
+        /* Get packet headers - buffer current pointer is at IP header (not Ethernet) */
         ip4_header_t *ip4h = NULL;
         ip6_header_t *ip6h = NULL;
         tcp_header_t *tcph = NULL;
+        u8 *dst_mac = NULL;  /* Will get from Ethernet header if available */
+        
+        /* Current pointer should be at IP header */
+        u8 *ip_start = vlib_buffer_get_current (b0);
 
         /* Determine packet type and get headers */
-        if (b0->current_length >= sizeof (ip4_header_t))
+        if (b0->current_length >= sizeof(ip4_header_t))
         {
-            ip4h = vlib_buffer_get_current (b0);
+            ip4h = (ip4_header_t *)ip_start;
             if (ip4h->ip_version_and_header_length == 0x45) /* IPv4 */
             {
-                if (b0->current_length >= sizeof (ip4_header_t) + sizeof (tcp_header_t) &&
+                if (b0->current_length >= sizeof(ip4_header_t) + sizeof(tcp_header_t) &&
                     ip4h->protocol == IP_PROTOCOL_TCP)
                 {
-                    tcph = (tcp_header_t *) ((u8 *) ip4h + sizeof (ip4_header_t));
+                    u32 ip_header_len = (ip4h->ip_version_and_header_length & 0x0f) * 4;
+                    tcph = (tcp_header_t *) ((u8 *) ip4h + ip_header_len);
                 }
             }
             else if ((ip4h->ip_version_and_header_length & 0xf0) == 0x60) /* IPv6 */
             {
                 ip6h = (ip6_header_t *) ip4h;
-                if (b0->current_length >= sizeof (ip6_header_t) + sizeof (tcp_header_t) &&
+                ip4h = NULL;  /* Clear ip4h */
+                if (b0->current_length >= sizeof(ip6_header_t) + sizeof(tcp_header_t) &&
                     ip6h->protocol == IP_PROTOCOL_TCP)
                 {
                     tcph = (tcp_header_t *) ((u8 *) ip6h + sizeof (ip6_header_t));
                 }
             }
         }
+        
+        /* Try to get destination MAC from Ethernet header if present
+         * Ethernet header is at data start (before current pointer) */
+        if (b0->current_data >= sizeof(ethernet_header_t))
+        {
+            ethernet_header_t *eth = (ethernet_header_t *)(((u8 *)b0->data) + b0->current_data - sizeof(ethernet_header_t));
+            dst_mac = eth->src_address;
+        }
+        else
+        {
+            /* No Ethernet header available, use broadcast */
+            static u8 broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+            dst_mac = broadcast_mac;
+        }
 
-        /* Process blocking action - create TCP reset */
+        /* Process blocking action - send TCP reset directly out the interface */
         if (tcph && (ip4h || ip6h))
         {
-            if (create_tcp_reset_packet (vm, b0, ip4h, ip6h, tcph) == 0)
+            /* Get configured TX interface (or use RX if not configured) */
+            extern ips_block_manager_t ips_block_manager;
+            u32 tx_sw_if_index = ips_block_manager.use_rx_interface ? 
+                                sw_if_index : ips_block_manager.block_tx_sw_if_index;
+            
+            /* Send reset packet:
+             * - TX interface: configured or RX interface
+             * - Source MAC: will be automatically set to TX interface's MAC
+             * - Dest MAC: original packet's source MAC
+             */
+            if (ips_block_send_tcp_reset(vm->thread_index, tx_sw_if_index,
+                                        NULL, dst_mac,  /* src_mac is ignored, dst_mac from original */
+                                        NULL, ip4h, ip6h, tcph,
+                                        0, /* is_reply */
+                                        IPS_BLOCK_REASON_ACL) == 0)
             {
                 block_node_stats[vm->thread_index].tcp_resets_sent++;
             }

@@ -976,8 +976,16 @@ ips_acl_send_tcp_reset(u32 thread_index, ips_session_t *session, u8 is_reply)
     if (!session)
         return -1;
 
-    /* Use the blocking module to send TCP reset */
-    return ips_block_send_tcp_reset(thread_index, session, NULL, NULL, NULL,
+    /* Use the blocking module to send TCP reset
+     * Note: When called from ACL without original packet context,
+     * we use configured block TX interface and NULL MACs (will use broadcast) */
+    extern ips_block_manager_t ips_block_manager;
+    u32 sw_if_index = ips_block_manager.use_rx_interface ? 
+                     0 : ips_block_manager.block_tx_sw_if_index;
+    
+    return ips_block_send_tcp_reset(thread_index, sw_if_index,
+                                   NULL, NULL, /* MAC addresses unknown */
+                                   session, NULL, NULL, NULL,
                                    is_reply, IPS_BLOCK_REASON_ACL);
 }
 
