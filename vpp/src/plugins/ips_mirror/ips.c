@@ -28,6 +28,9 @@
 #include "session/ips_session_timer.h"
 #include "block/ips_block.h"
 
+/* Global log level - default to WARNING level */
+ips_log_level_t ips_global_log_level = IPS_LOG_LEVEL_WARNING;
+
 /* Module headers */
 #include "detection/ips_detection_module.h"
 #include "rules/ips_rules_module.h"
@@ -193,7 +196,7 @@ ips_interface_enable_disable (const ips_interface_enable_disable_args_t *args)
 	  extern int ips_acl_apply_to_interface(u32 sw_if_index);
 	  ips_acl_apply_to_interface(sw_if_index);
 
-	  clib_warning ("IPS enabled on interface %u", sw_if_index);
+	  IPS_INFO ("IPS enabled on interface %u", sw_if_index);
 	}
     }
   else
@@ -210,7 +213,7 @@ ips_interface_enable_disable (const ips_interface_enable_disable_args_t *args)
 	  vnet_feature_enable_disable ("ip6-unicast", "ips-input-ip6",
 				       sw_if_index, 0, 0, 0);
 
-	  clib_warning ("IPS disabled on interface %u", sw_if_index);
+	  IPS_INFO ("IPS disabled on interface %u", sw_if_index);
 	}
     }
 

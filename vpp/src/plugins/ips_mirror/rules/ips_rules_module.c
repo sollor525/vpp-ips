@@ -30,12 +30,8 @@ clib_error_t *
 ips_rules_module_init (void)
 {
     /* Initialize rule parser */
-    /* TODO: Re-enable when rule parser is implemented */
-    /*
-    int result = ips_rule_parser_init ();
-    if (result != 0)
-        return clib_error_return (0, "Failed to initialize rule parser");
-    */
+    /* Rule parser initialization is handled by individual parser modules */
+    clib_warning ("Rules module initialized");
 
     return 0;
 }
@@ -49,8 +45,7 @@ ips_rules_module_cleanup (void)
     /* Clear all rules */
     ips_rules_clear ();
 
-    /* Rule parser cleanup -暂时注释掉，因为函数不存在 */
-    // ips_rule_parser_cleanup ();
+    clib_warning ("Rules module cleanup completed");
 }
 
 /**
@@ -64,8 +59,7 @@ ips_rules_load_default (void)
     /* Set default rule file path */
     im->default_rules_file = format (0, "/etc/vpp/ips/suricata.rules%c", 0);
 
-    /* Load default rules on startup if file exists - temporarily disabled */
-    /*
+    /* Load default rules on startup if file exists */
     if (im->default_rules_file)
     {
         struct stat st;
@@ -74,36 +68,35 @@ ips_rules_load_default (void)
             int rules_loaded = ips_load_rules_from_file_enhanced ((char *) im->default_rules_file);
             if (rules_loaded > 0)
             {
-                clib_warning ("IPS: Loaded %d rules from %s on startup",
+                clib_warning ("Loaded %d rules from %s on startup",
                              rules_loaded, im->default_rules_file);
 
                 // Compile the loaded rules
                 if (ips_rules_compile () >= 0)
                 {
-                    clib_warning ("IPS: Rules compiled successfully on startup");
+                    clib_warning ("Rules compiled successfully on startup");
                 }
                 else
                 {
-                    clib_warning ("IPS: Failed to compile rules on startup");
+                    clib_warning ("Failed to compile rules on startup");
                 }
             }
             else if (rules_loaded < 0)
             {
-                clib_warning ("IPS: Failed to load rules from %s on startup",
+                clib_warning ("Failed to load rules from %s on startup",
                              im->default_rules_file);
             }
             else
             {
-                clib_warning ("IPS: No rules found in %s", im->default_rules_file);
+                clib_warning ("No rules found in %s", im->default_rules_file);
             }
         }
         else
         {
-            clib_warning ("IPS: Default rules file %s not found, skipping startup load",
+            clib_warning ("Default rules file %s not found, skipping startup load",
                          im->default_rules_file);
         }
     }
-    */
 
     return 0;
 }
@@ -123,7 +116,7 @@ ips_rules_module_init_fn (vlib_main_t * vm)
     /* Load default rules */
     error = ips_rules_load_default ();
     if (error)
-        clib_warning ("IPS: Failed to load default rules: %U", format_clib_error, error);
+        clib_warning ("Failed to load default rules");
 
     return 0;
 }

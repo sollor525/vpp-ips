@@ -804,3 +804,26 @@ ips_load_rules_from_file_enhanced (const char *filename)
                  skipped_rules_count);
     return rules_loaded;
 }
+
+/**
+ * @brief Clear all rules from the system
+ */
+void
+ips_rules_clear (void)
+{
+    ips_main_t *im = &ips_main;
+
+    /* Free all rule memory */
+    if (im->rules)
+    {
+        vec_free (im->rules);
+        im->rules = NULL;
+    }
+
+    /* Reset rule counters */
+    im->rule_count = 0;
+    im->rules_compiled = 0;
+    im->rules_dirty = 1;
+
+    clib_warning ("All rules cleared from system");
+}

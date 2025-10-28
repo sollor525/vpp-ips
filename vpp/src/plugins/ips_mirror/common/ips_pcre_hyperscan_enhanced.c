@@ -11,6 +11,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <regex.h>
+#include <hs/hs_compile.h>
 
 /* Enhanced PCRE to Hyperscan pattern conversion mapping */
 typedef struct pcre_to_hs_map_t
@@ -166,7 +167,7 @@ check_unsupported_features (const char *pcre_pattern, u8 **error_msg)
     if (strstr (pcre_pattern, unsupported_pcre_features[i]))
     {
       if (error_msg)
-        *error_msg = format (0, "Unsupported PCRE feature: %s%c",
+        *error_msg = (u8 *)format (0, "Unsupported PCRE feature: %s%c",
                            unsupported_pcre_features[i], 0);
       return -1;
     }
@@ -185,7 +186,7 @@ convert_python_named_groups (char *pattern, u8 **error_msg)
   if (!result)
   {
     if (error_msg)
-      *error_msg = format (0, "Memory allocation failed%c", 0);
+      *error_msg = (u8 *)format (0, "Memory allocation failed%c", 0);
     return -1;
   }
 
@@ -246,7 +247,7 @@ convert_lookaround_patterns (char *pattern, u8 **error_msg)
   if (!result)
   {
     if (error_msg)
-      *error_msg = format (0, "Memory allocation failed%c", 0);
+      *error_msg = (u8 *)format (0, "Memory allocation failed%c", 0);
     return -1;
   }
 
@@ -355,7 +356,7 @@ ips_convert_pcre_to_hyperscan_enhanced (const char *pcre_pattern, char **hs_patt
   if (!converted)
   {
     if (error_msg)
-      *error_msg = format (0, "Memory allocation failed%c", 0);
+      *error_msg = (u8 *)format (0, "Memory allocation failed%c", 0);
     return -1;
   }
 
@@ -400,7 +401,7 @@ ips_convert_pcre_to_hyperscan_enhanced (const char *pcre_pattern, char **hs_patt
         {
           clib_mem_free (converted);
           if (error_msg)
-            *error_msg = format (0, "Memory allocation failed during conversion%c", 0);
+            *error_msg = (u8 *)format (0, "Memory allocation failed during conversion%c", 0);
           return -1;
         }
 
@@ -472,7 +473,7 @@ ips_convert_pcre_to_hyperscan_enhanced (const char *pcre_pattern, char **hs_patt
 
   *hs_pattern = converted;
 
-  clib_warning ("Enhanced PCRE to Hyperscan conversion: '%s' -> '%s' (flags: 0x%x)",
+  IPS_DEBUG ("Enhanced PCRE to Hyperscan conversion: '%s' -> '%s' (flags: 0x%x)",
                pcre_pattern, converted, hs_flags ? *hs_flags : 0);
 
   return 0;
@@ -487,7 +488,7 @@ ips_validate_pcre_for_hyperscan_enhanced (const char *pcre_pattern, u8 **error_m
   if (!pcre_pattern)
   {
     if (error_msg)
-      *error_msg = format (0, "NULL pattern%c", 0);
+      *error_msg = (u8 *)format (0, "NULL pattern%c", 0);
     return -1;
   }
 
@@ -495,7 +496,7 @@ ips_validate_pcre_for_hyperscan_enhanced (const char *pcre_pattern, u8 **error_m
   if (strlen (pcre_pattern) > 8192)
   {
     if (error_msg)
-      *error_msg = format (0, "Pattern too long (max 8192 chars)%c", 0);
+      *error_msg = (u8 *)format (0, "Pattern too long (max 8192 chars)%c", 0);
     return -1;
   }
 
@@ -517,15 +518,15 @@ ips_get_pcre_conversion_stats (void)
     total_conversions++;
   }
 
-  clib_warning ("PCRE conversion table contains %d conversion rules", total_conversions);
+  IPS_DEBUG ("PCRE conversion table contains %d conversion rules", total_conversions);
 
   /* Print high priority conversions */
-  clib_warning ("High priority conversions (priority >= 80):");
+  IPS_DEBUG ("High priority conversions (priority >= 80):");
   for (i = 0; pcre_conversion_table[i].pcre_pattern != NULL; i++)
   {
     if (pcre_conversion_table[i].priority >= 80)
     {
-      clib_warning ("  %s -> %s (%s)",
+      IPS_DEBUG ("  %s -> %s (%s)",
                    pcre_conversion_table[i].pcre_pattern,
                    pcre_conversion_table[i].hs_pattern,
                    pcre_conversion_table[i].description);

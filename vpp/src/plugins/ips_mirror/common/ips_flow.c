@@ -71,7 +71,7 @@ ips_flow_delete (ips_per_thread_data_t * ptd, ips_flow_t * flow)
         hs_error_t hs_err = hs_close_stream (flow->hs_stream, NULL, NULL, NULL);
         if (hs_err != HS_SUCCESS)
         {
-            clib_warning ("Failed to close Hyperscan stream: %d", hs_err);
+            IPS_WARNING ("Failed to close Hyperscan stream: %d", hs_err);
         }
         flow->hs_stream = NULL;
     }

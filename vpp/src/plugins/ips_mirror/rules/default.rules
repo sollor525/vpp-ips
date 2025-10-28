@@ -1,0 +1,30 @@
+# VPP IPS Plugin - Default Suricata-Compatible Rules
+# Copyright (c) 2024 VPP IPS Project
+
+# Alert on any HTTP GET request
+alert tcp any any -> any any (msg:"HTTP GET Request Detected"; content:"GET "; http_method; nocase; sid:1000001; rev:1;)
+
+# Alert on common web attacks
+alert tcp any any -> any 80 (msg:"Possible SQL Injection"; content:"union"; nocase; sid:1000002; rev:1;)
+alert tcp any any -> any 80 (msg:"Possible SQL Injection"; content:"select"; nocase; sid:1000003; rev:1;)
+alert tcp any any -> any 80 (msg:"Possible XSS Attack"; content:"<script"; nocase; sid:1000004; rev:1;)
+
+# Alert on suspicious traffic patterns
+alert tcp any any -> any 22 (msg:"SSH Connection Attempt"; content:"SSH"; nocase; sid:1000005; rev:1;)
+alert tcp any any -> any 3389 (msg:"RDP Connection Attempt"; content:"rdp"; nocase; sid:1000006; rev:1;)
+
+# Alert on malware-related patterns
+alert tcp any any -> any any (msg:"Possible Malware C2 Communication"; content:"botnet"; nocase; sid:1000007; rev:1;)
+alert tcp any any -> any any (msg:"Possible Exploit Kit"; content:"exploit"; nocase; sid:1000008; rev:1;)
+
+# DNS-based detection
+alert udp any 53 -> any any (msg:"DNS Query for Suspicious Domain"; content:"malware"; nocase; sid:1000009; rev:1;)
+
+# ICMP-based detection
+alert icmp any any -> any any (msg:"ICMP Traffic Detected"; itype:8; sid:1000010; rev:1;)
+
+# Drop malicious traffic (example rules)
+drop tcp any any -> any 445 (msg:"SMB Traffic Blocked"; content:"SMB"; nocase; sid:1000011; rev:1;)
+
+# Log traffic patterns
+log tcp any any -> any 443 (msg:"HTTPS Traffic Logged"; content:"GET"; http_method; nocase; sid:1000012; rev:1;)

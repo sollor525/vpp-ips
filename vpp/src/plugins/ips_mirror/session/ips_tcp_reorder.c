@@ -16,8 +16,10 @@
 
 #include "ips.h"
 #include "detection/ips_detection.h"
-/* Hyperscan temporarily disabled */
-/* #include <hs/hs.h> */
+/* Hyperscan support */
+#ifdef HAVE_HYPERSCAN
+#include <hs/hs.h>
+#endif
 
 /**
  * @brief TCP reorder return codes
@@ -649,10 +651,13 @@ ips_detect_patterns_on_data (ips_flow_t *flow, const u8 *data, u32 data_len)
     ips_main_t *im = &ips_main;
     ips_detection_context_t det_ctx;
     int ret = 0;
+
+#ifdef HAVE_HYPERSCAN
     hs_scratch_t *scratch = NULL;
     hs_error_t hs_err;
+#endif
 
-    if (PREDICT_FALSE (!im->rules_compiled || !im->hs_database))
+    if (PREDICT_FALSE (!im->rules_compiled))
         return 0;
 
     if (PREDICT_FALSE (!data || data_len == 0))
@@ -662,6 +667,10 @@ ips_detect_patterns_on_data (ips_flow_t *flow, const u8 *data, u32 data_len)
     clib_memset (&det_ctx, 0, sizeof (det_ctx));
     det_ctx.flow = flow;
     det_ctx.buffer = NULL; /* No specific buffer for ordered data detection */
+
+#ifdef HAVE_HYPERSCAN
+    if (PREDICT_FALSE (!im->hs_database))
+        return 0;
 
     /* Allocate scratch space */
     hs_err = hs_alloc_scratch (im->hs_database, &scratch);
@@ -752,6 +761,7 @@ ips_detect_patterns_on_data (ips_flow_t *flow, const u8 *data, u32 data_len)
 
     /* Free scratch space */
     hs_free_scratch (scratch);
+#endif
 
     return ret;
 }

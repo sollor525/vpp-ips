@@ -13,16 +13,10 @@
 #include <time.h>
 #include <sys/stat.h>
 
-/* Log levels */
-typedef enum
-{
-    IPS_LOG_LEVEL_DEBUG = 0,
-    IPS_LOG_LEVEL_INFO,
-    IPS_LOG_LEVEL_NOTICE,
-    IPS_LOG_LEVEL_WARNING,
-    IPS_LOG_LEVEL_ERROR,
-    IPS_LOG_LEVEL_CRITICAL,
-} ips_log_level_t;
+/* Include main IPS header for log level definitions */
+#include "ips.h"
+
+/* Log levels - now defined in ips.h */
 
 /* Log output targets */
 typedef enum

@@ -619,12 +619,11 @@ int ips_log_file_close (FILE **fp) {
 
 const char *ips_log_level_to_string (ips_log_level_t level) {
     switch (level) {
-        case IPS_LOG_LEVEL_DEBUG: return "DEBUG";
-        case IPS_LOG_LEVEL_INFO: return "INFO";
-        case IPS_LOG_LEVEL_NOTICE: return "NOTICE";
-        case IPS_LOG_LEVEL_WARNING: return "WARNING";
         case IPS_LOG_LEVEL_ERROR: return "ERROR";
-        case IPS_LOG_LEVEL_CRITICAL: return "CRITICAL";
+        case IPS_LOG_LEVEL_WARNING: return "WARNING";
+        case IPS_LOG_LEVEL_INFO: return "INFO";
+        case IPS_LOG_LEVEL_DEBUG: return "DEBUG";
+        case IPS_LOG_LEVEL_TRACE: return "TRACE";
         default: return "UNKNOWN";
     }
 }

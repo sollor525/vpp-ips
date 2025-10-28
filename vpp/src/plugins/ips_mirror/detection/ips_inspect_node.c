@@ -11,7 +11,6 @@
 #include "../ips.h"
 #include "../session/ips_session.h"
 #include "../protocols/ips_protocol_detection.h"
-#include "ips_detection.h"
 
 typedef struct
 {

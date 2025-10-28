@@ -56,25 +56,57 @@ typedef enum
     IPS_PROTO_DETECT_FAILED
 } ips_proto_detect_state_t;
 
+/* Protocol-specific parsing states */
+typedef enum
+{
+    IPS_PROTO_STATE_NONE = 0,
+    IPS_PROTO_STATE_INIT,
+    IPS_PROTO_STATE_NEGOTIATING,
+    IPS_PROTO_STATE_ESTABLISHED,
+    IPS_PROTO_STATE_CLOSING,
+    IPS_PROTO_STATE_ERROR
+} ips_proto_state_t;
+
+/* Protocol parsing flags */
+typedef enum
+{
+    IPS_PROTO_FLAG_NONE = 0,
+    IPS_PROTO_FLAG_ENCRYPTED = 0x01,
+    IPS_PROTO_FLAG_COMPRESSED = 0x02,
+    IPS_PROTO_FLAG_MULTIPLEXED = 0x04,
+    IPS_PROTO_STATE_ANOMALY_DETECTED = 0x08
+} ips_proto_flags_t;
+
 /* Protocol Detection Context (per flow) */
 typedef struct
 {
     ips_alproto_t detected_protocol;
     ips_proto_detect_state_t state;
-    
+
+    /* Protocol-specific state */
+    ips_proto_state_t proto_state;
+
     /* Detection confidence (0-100) */
     u8 confidence;
-    
+
     /* Number of packets examined for detection */
     u16 packets_examined;
-    
+
     /* Protocol-specific parser state */
     void *parser_state;
-    
-    /* Flags */
-    u8 is_encrypted:1;
-    u8 detection_bypass:1;  /* Skip further detection */
-    u8 reserved:6;
+
+    /* Protocol parsing flags */
+    ips_proto_flags_t flags;
+
+    /* Last detected timestamp (for timeout) */
+    f64 last_detection_time;
+
+    /* Bytes processed for protocol analysis */
+    u64 bytes_processed;
+
+    /* Protocol-specific data counters */
+    u32 packets_count[2];  /* [0]=client->server, [1]=server->client */
+
 } ips_proto_detect_ctx_t;
 
 /* Protocol Parser Interface */
@@ -82,22 +114,38 @@ typedef struct
 {
     /* Protocol type */
     ips_alproto_t protocol;
-    
+
     /* Protocol name */
     const char *name;
-    
-    /* Default port (0 if none) */
-    u16 default_port;
-    
+
+    /* Default ports (array, terminated by 0) */
+    u16 *default_ports;
+
+    /* Minimum bytes needed for reliable detection */
+    u16 min_detect_len;
+
     /* Probe function - returns confidence (0-100) */
     u8 (*probe)(u8 *data, u32 len, u8 direction);
-    
-    /* Parse function - returns 0 on success */
-    int (*parse)(void *parser_state, u8 *data, u32 len, u8 direction);
-    
+
+    /* Parse function - updates parser state and proto_state */
+    int (*parse)(void *parser_state, u8 *data, u32 len, u8 direction,
+                 ips_proto_state_t *proto_state, ips_proto_flags_t *flags);
+
+    /* Get protocol-specific metadata */
+    int (*get_metadata)(void *parser_state, char *buffer, u32 buffer_len);
+
+    /* Check for protocol anomalies */
+    int (*check_anomaly)(void *parser_state, u8 *data, u32 len, u8 direction);
+
+    /* Create/initialize parser state */
+    void *(*init_state)(void);
+
     /* Free parser state */
     void (*free_state)(void *parser_state);
-    
+
+    /* Protocol timeout in seconds (0 = no timeout) */
+    u32 timeout_seconds;
+
 } ips_proto_parser_t;
 
 
@@ -150,6 +198,48 @@ int ips_protocol_inspect(ips_session_t *session,
                         ips_alproto_t proto,
                         u8 *payload,
                         u32 payload_len);
+
+/**
+ * @brief Update protocol parsing state with new packet data
+ * @param session Session context
+ * @param payload Application payload
+ * @param payload_len Payload length
+ * @param direction Packet direction
+ * @return 0=success, -1=error
+ */
+int ips_protocol_update_state(ips_session_t *session,
+                             u8 *payload,
+                             u32 payload_len,
+                             u8 direction);
+
+/**
+ * @brief Get protocol parsing state
+ */
+ips_proto_state_t ips_get_protocol_state(ips_session_t *session);
+
+/**
+ * @brief Check if protocol parsing detected anomalies
+ */
+int ips_protocol_has_anomalies(ips_session_t *session);
+
+/**
+ * @brief Get protocol-specific metadata
+ */
+int ips_get_protocol_metadata(ips_session_t *session,
+                             char *buffer,
+                             u32 buffer_len);
+
+/**
+ * @brief Cleanup protocol detection context for expired sessions
+ */
+void ips_protocol_cleanup_expired_sessions(f64 current_time);
+
+/**
+ * @brief Get protocol detection statistics
+ */
+void ips_protocol_get_stats(u64 *total_detections,
+                           u64 *protocol_counts,
+                           u32 *protocol_count_size);
 
 #endif /* __IPS_PROTOCOL_DETECTION_H__ */
 

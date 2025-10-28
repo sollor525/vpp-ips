@@ -30,6 +30,32 @@
 
 // #include <hs/hs.h>  // Temporarily disabled
 
+/* IPS Logging Levels */
+typedef enum {
+    IPS_LOG_LEVEL_ERROR = 0,    /* Critical errors only */
+    IPS_LOG_LEVEL_WARNING = 1,  /* Warnings and important events */
+    IPS_LOG_LEVEL_INFO = 2,     /* General information */
+    IPS_LOG_LEVEL_DEBUG = 3,    /* Debug information */
+    IPS_LOG_LEVEL_TRACE = 4     /* Detailed trace information */
+} ips_log_level_t;
+
+/* Global log level - can be configured at runtime */
+extern ips_log_level_t ips_global_log_level;
+
+/* Logging macros */
+#define IPS_LOG(level, fmt, ...) \\
+    do { \\
+        if (level <= ips_global_log_level) { \\
+            clib_warning(fmt, ##__VA_ARGS__); \\
+        } \\
+    } while (0)
+
+#define IPS_ERROR(fmt, ...)   IPS_LOG(IPS_LOG_LEVEL_ERROR, "IPS ERROR: " fmt, ##__VA_ARGS__)
+#define IPS_WARNING(fmt, ...) IPS_LOG(IPS_LOG_LEVEL_WARNING, "IPS WARNING: " fmt, ##__VA_ARGS__)
+#define IPS_INFO(fmt, ...)    IPS_LOG(IPS_LOG_LEVEL_INFO, "IPS INFO: " fmt, ##__VA_ARGS__)
+#define IPS_DEBUG(fmt, ...)   IPS_LOG(IPS_LOG_LEVEL_DEBUG, "IPS DEBUG: " fmt, ##__VA_ARGS__)
+#define IPS_TRACE(fmt, ...)   IPS_LOG(IPS_LOG_LEVEL_TRACE, "IPS TRACE: " fmt, ##__VA_ARGS__)
+
 /* TCP reorder buffer entry - uses VPP buffer index instead of data copy */
 typedef struct tcp_reorder_buffer_t
 {
@@ -55,15 +81,17 @@ typedef struct tcp_reorder_buffer_t
 #define IPS_MAX_INTERFACES 256
 #define IPS_MAX_SESSIONS 1048576
 #define IPS_MAX_RULES 65536
-#define IPS_MAX_MATCHES_PER_PACKET 32
+#define IPS_MAX_MATCHES_PER_PACKET 64
 #define IPS_SESSION_TIMEOUT_DEFAULT 300
 #define IPS_CLEANUP_INTERVAL 30
 
 /* Protocol definitions */
+#define IPS_PROTO_IP 0
 #define IPS_PROTO_TCP 6
 #define IPS_PROTO_UDP 17
 #define IPS_PROTO_ICMP 1
 #define IPS_PROTO_ICMPV6 58
+#define IPS_PROTO_ANY 255
 
 /* Flow directions */
 typedef enum
@@ -108,6 +136,7 @@ typedef enum
     IPS_ACTION_ALERT,
     IPS_ACTION_REJECT,
     IPS_ACTION_LOG,
+    IPS_ACTION_MAX,
 } ips_action_t;
 
 /* Simplified TCP State Definitions - Adapted for Mirror Traffic

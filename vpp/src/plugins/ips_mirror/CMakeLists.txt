@@ -14,6 +14,15 @@ find_library(HYPERSCAN_LIB
   NO_DEFAULT_PATH
 )
 
+# Check if Hyperscan was found
+if(HYPERSCAN_LIB)
+  message(STATUS "Found Hyperscan: ${HYPERSCAN_LIB}")
+  set(IPS_HAVE_HYPERSCAN 1)
+else()
+  message(WARNING "Hyperscan not found, disabling Hyperscan-dependent features")
+  set(IPS_HAVE_HYPERSCAN 0)
+endif()
+
 # Find PCRE library
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PCRE REQUIRED libpcre)
@@ -31,8 +40,7 @@ set(IPS_SOURCES
   session/ips_session.c
   session/ips_session_timer.c
   session/ips_session_cli.c
-  # Temporarily disabled due to Hyperscan dependency:
-  # session/ips_tcp_reorder.c
+  session/ips_tcp_reorder.c
 
   # Blocking module
   block/ips_block.c
@@ -45,51 +53,71 @@ set(IPS_SOURCES
 
   # Detection engine module
   detection/ips_detection_module.c
-  detection/ips_detection_temp.c
   detection/ips_inspect_node.c
-  # Temporarily disabled due to Hyperscan dependency:
-  # detection/ips_detection.c
-  # detection/ips_detection_advanced.c
-  # detection/ips_detection_optimized.c
-  # detection/ips_detection_enhanced.c
-  # detection/ips_multi_content_detection.c
+  detection/ips_suricata_enhanced_parser.c
+  detection/ips_suricata_engine_core.c
+  detection/ips_suricata_inspect_node.c
+  detection/ips_flowbits.c
+  detection/ips_byte_operations.c
+  detection/ips_rule_index.c
+  detection/ips_suricata_integration.c
+  # detection/ips_suricata_performance_test.c  # File not found
+  detection/ips_suricata_rule_utils.c
+  detection/ips_hyperscan_engine.c
+  detection/ips_pcre_engine.c
+  detection/ips_suricata_cli.c
+  detection/ips_detection.c
+  detection/ips_detection_advanced.c
+  detection/ips_detection_optimized.c
+  detection/ips_detection_enhanced.c
+  detection/ips_multi_content_detection.c
 
   # Rules module
   rules/ips_rules_module.c
-  # Temporarily disabled due to dependencies:
-  # rules/ips_rule_parser.c
-  # rules/ips_rule_parser_advanced.c
-  # rules/ips_enhanced_parser.c
-  # rules/ips_enhanced_suricata_parser.c
-  # rules/ips_multi_content_parser.c
+  rules/ips_rule_parser.c
+  rules/ips_rule_parser_advanced.c
+  rules/ips_enhanced_parser.c
+  rules/ips_enhanced_suricata_parser.c
+  rules/ips_multi_content_parser.c
 
-  # Common utilities (exclude problematic files for now)
+  # Common utilities
   common/ips_proto.c
   common/ips_response.c
   common/ips_flow.c
-#  common/ips_pcre_support.c          # Temporarily disabled
-#  common/ips_pcre_hyperscan.c        # Temporarily disabled
-#  common/ips_pcre_hyperscan_enhanced.c # Temporarily disabled
+  common/ips_pcre_hyperscan_enhanced.c
 
   # Protocol detection module
   protocols/ips_protocol_detection.c
+  protocols/ips_http_parser.c
+  protocols/ips_tls_parser.c
+  protocols/ips_dns_parser.c
   protocols/ips_protocol_detect_node.c
 
-  # Timer API - Temporarily disabled
-  # ips_timer_api.c
+  # Timer API
+  ips_timer_api.c
 )
 
 # Collect all header files
 set(IPS_HEADERS
   ips.h
   ips_logging.h
-  
+
   # Module headers
   session/ips_session.h
   session/ips_session_timer.h
 
   detection/ips_detection_module.h
   detection/ips_detection.h
+  detection/ips_detection_types.h
+  detection/ips_suricata_rule_types.h
+  detection/ips_suricata_enhanced_parser.h
+  detection/ips_suricata_enhanced_engine.h
+  detection/ips_hyperscan_engine.h
+  detection/ips_pcre_engine.h
+  detection/ips_suricata_integration.h
+  detection/ips_flowbits.h
+  detection/ips_byte_operations.h
+  detection/ips_rule_index.h
 
   rules/ips_rules_module.h
   rules/ips_rule_parser.h
@@ -97,6 +125,13 @@ set(IPS_HEADERS
   # Common headers
   common/ips_proto.h
   common/ips_response.h
+  common/ips_flow.h
+
+  # Protocol detection headers
+  protocols/ips_protocol_detection.h
+  protocols/ips_http_parser.h
+  protocols/ips_tls_parser.h
+  protocols/ips_dns_parser.h
 )
 
 # Add the plugin
@@ -120,30 +155,33 @@ add_vpp_plugin(ips
   vpp-plugin-ips
 )
 
-# Configure Hyperscan support (temporarily disabled)
-message(STATUS "Hyperscan support temporarily disabled for core functionality testing")
-# if(EXISTS "${HYPERSCAN_INCLUDE_DIR}/hs/hs.h" AND HYPERSCAN_LIB)
-#   message(STATUS "Found Hyperscan at ${HYPERSCAN_ROOT}")
-#   message(STATUS "Found Hyperscan library: ${HYPERSCAN_LIB}")
-#
-#   # Add Hyperscan include directory and library
-#   target_include_directories(ips_plugin PRIVATE ${HYPERSCAN_INCLUDE_DIR})
-#   target_link_libraries(ips_plugin ${HYPERSCAN_LIB})
-#   target_compile_definitions(ips_plugin PRIVATE HAVE_HYPERSCAN=1)
-#
-#   # Add runtime library path
-#   set_target_properties(ips_plugin PROPERTIES
-#     INSTALL_RPATH "${HYPERSCAN_LIB_DIR}"
-#     BUILD_WITH_INSTALL_RPATH TRUE
-#   )
-# else()
-#   if(NOT EXISTS "${HYPERSCAN_INCLUDE_DIR}/hs/hs.h")
-#     message(WARNING "Hyperscan headers not found at ${HYPERSCAN_INCLUDE_DIR}")
-#   endif()
-#   if(NOT HYPERSCAN_LIB)
-#     message(WARNING "Hyperscan library not found in ${HYPERSCAN_LIB_DIR}")
-#   endif()
-# endif()
+# Configure Hyperscan support
+if(EXISTS "${HYPERSCAN_INCLUDE_DIR}/hs/hs.h" AND HYPERSCAN_LIB)
+  message(STATUS "Found Hyperscan at ${HYPERSCAN_ROOT}")
+  message(STATUS "Found Hyperscan library: ${HYPERSCAN_LIB}")
+
+  # Add Hyperscan include directory and library
+  target_include_directories(ips_plugin PRIVATE ${HYPERSCAN_INCLUDE_DIR})
+  target_link_libraries(ips_plugin ${HYPERSCAN_LIB})
+  target_compile_definitions(ips_plugin PRIVATE HAVE_HYPERSCAN=1)
+
+  # Add runtime library path
+  set_target_properties(ips_plugin PROPERTIES
+    INSTALL_RPATH "${HYPERSCAN_LIB_DIR}"
+    BUILD_WITH_INSTALL_RPATH TRUE
+  )
+
+  # Enable Hyperscan-related source files
+  message(STATUS "Hyperscan support enabled - high-performance pattern matching active")
+else()
+  if(NOT EXISTS "${HYPERSCAN_INCLUDE_DIR}/hs/hs.h")
+    message(WARNING "Hyperscan headers not found at ${HYPERSCAN_INCLUDE_DIR}")
+  endif()
+  if(NOT HYPERSCAN_LIB)
+    message(WARNING "Hyperscan library not found in ${HYPERSCAN_LIB_DIR}")
+  endif()
+  message(STATUS "Hyperscan support disabled - falling back to basic pattern matching")
+endif()
 
 # Add module include directories
 target_include_directories(ips_plugin PRIVATE
