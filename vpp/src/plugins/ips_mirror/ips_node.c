@@ -23,12 +23,7 @@
 
 #include "ips.h"
 #include "detection/ips_detection.h" /* for foreach_ips_error */
-#include "session/ips_session.h"
 #include "session/ips_session_timer.h"  /* for timer expiration processing */
-#include "acl/ips_acl.h"  /* for ACL checking */
-#include "vlib/buffer.h"
-#include "vnet/ip/ip4_packet.h"
-#include "vnet/tcp/tcp_packet.h"
 
 
 
@@ -49,7 +44,8 @@ typedef enum
     IPS_INPUT_NEXT_IP6_LOOKUP,
     IPS_INPUT_NEXT_ETHERNET_INPUT,
     IPS_INPUT_NEXT_BLOCK,
-    IPS_INPUT_NEXT_PROTOCOL_DETECT,  /* New: send to protocol detection node */
+    IPS_INPUT_NEXT_TCP_SESSION,     /* New: send to TCP session node */
+    IPS_INPUT_NEXT_PROTOCOL_DETECT,  /* Send to protocol detection node */
     IPS_INPUT_N_NEXT,
 } ips_input_next_t;
 
@@ -142,50 +138,18 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
             b0 = vlib_get_buffer (vm, bi0);
             sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
 
-            /* Direct session handling without flow parsing */
+            /* Simplified packet handling - route to appropriate nodes */
             if (!is_ip6)
             {
                 ip4_header_t *ip4h = vlib_buffer_get_current (b0);
                 if (PREDICT_TRUE (ip4h->protocol == IP_PROTOCOL_TCP))
                 {
-                    tcp_header_t *tcph = ip4_next_header (ip4h);
-                    
-                    /* Step 1: Lookup or create session first */
-                    ips_session_t *session = ips_session_lookup_or_create_ipv4 (thread_index, ip4h, tcph);
-                    
-                    if (session)
-                    {
-                        /* Step 2: Check ACL with session context
-                         * ACL check uses session info to determine correct direction matching */
-                        ips_acl_action_t acl_action = IPS_ACL_ACTION_PERMIT;
-                        int acl_result = ips_acl_check_packet(thread_index, session, ip4h, NULL, tcph, &acl_action);
-                        
-                        if (acl_result != 0 || acl_action == IPS_ACL_ACTION_DENY || acl_action == IPS_ACL_ACTION_RESET)
-                        {
-                            /* ACL denies - mark session as blocked */
-                            session->flags |= IPS_SESSION_FLAG_BLOCKED;
-                        }
-                        
-                        /* Step 3: Determine next node based on ACL result */
-                        if (session->flags & IPS_SESSION_FLAG_BLOCKED)
-                        {
-                            /* ACL blocked - send to block node */
-                            next0 = IPS_INPUT_NEXT_BLOCK;
-                        }
-                        else
-                        {
-                            /* ACL passed - send to protocol detection node for IPS inspection */
-                            next0 = IPS_INPUT_NEXT_PROTOCOL_DETECT;
-                        }
-                    }
-                    else
-                    {
-                        /* No session - forward normally */
-                        next0 = IPS_INPUT_NEXT_IP4_LOOKUP;
-                    }
+                    /* TCP packet - send to TCP session node for processing */
+                    next0 = IPS_INPUT_NEXT_TCP_SESSION;
                 }
                 else
                 {
+                    /* Non-TCP packet - forward normally */
                     next0 = IPS_INPUT_NEXT_IP4_LOOKUP;
                 }
             }
@@ -194,44 +158,12 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                 ip6_header_t *ip6h = vlib_buffer_get_current (b0);
                 if (PREDICT_TRUE (ip6h->protocol == IP_PROTOCOL_TCP))
                 {
-                    tcp_header_t *tcph = ip6_next_header (ip6h);
-                    
-                    /* Step 1: Lookup or create session first */
-                    ips_session_t *session = ips_session_lookup_or_create_ipv6 (thread_index, ip6h, tcph);
-                    
-                    if (session)
-                    {
-                        /* Step 2: Check ACL with session context
-                         * ACL check uses session info to determine correct direction matching */
-                        ips_acl_action_t acl_action = IPS_ACL_ACTION_PERMIT;
-                        int acl_result = ips_acl_check_packet(thread_index, session, NULL, ip6h, tcph, &acl_action);
-                        
-                        if (acl_result != 0 || acl_action == IPS_ACL_ACTION_DENY || acl_action == IPS_ACL_ACTION_RESET)
-                        {
-                            /* ACL denies - mark session as blocked */
-                            session->flags |= IPS_SESSION_FLAG_BLOCKED;
-                        }
-                        
-                        /* Step 3: Determine next node based on ACL result */
-                        if (session->flags & IPS_SESSION_FLAG_BLOCKED)
-                        {
-                            /* ACL blocked - send to block node */
-                            next0 = IPS_INPUT_NEXT_BLOCK;
-                        }
-                        else
-                        {
-                            /* ACL passed - send to protocol detection node for IPS inspection */
-                            next0 = IPS_INPUT_NEXT_PROTOCOL_DETECT;
-                        }
-                    }
-                    else
-                    {
-                        /* No session - forward normally */
-                        next0 = IPS_INPUT_NEXT_IP6_LOOKUP;
-                    }
+                    /* TCP packet - send to TCP session node for processing */
+                    next0 = IPS_INPUT_NEXT_TCP_SESSION;
                 }
                 else
                 {
+                    /* Non-TCP packet - forward normally */
                     next0 = IPS_INPUT_NEXT_IP6_LOOKUP;
                 }
             }

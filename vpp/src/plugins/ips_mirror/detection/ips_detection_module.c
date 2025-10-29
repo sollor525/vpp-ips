@@ -35,9 +35,7 @@ ips_detection_module_init (ips_main_t * im)
     if (error)
         return error;
 
-    /* Initialize advanced detection engine - temporarily disabled */
-    /* ips_detection_advanced_init (); */
-
+    
     return 0;
 }
 

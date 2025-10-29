@@ -10,7 +10,7 @@
 
 #include <vlib/vlib.h>
 #include "ips_suricata_rule_types.h"
-#include "ips_suricata_enhanced_engine.h"
+#include "ips_suricata_engine.h"
 
 /* Maximum number of patterns per database */
 #define IPS_HS_MAX_PATTERNS 1024

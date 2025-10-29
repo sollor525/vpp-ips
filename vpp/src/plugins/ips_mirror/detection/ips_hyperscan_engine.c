@@ -10,7 +10,7 @@
 #include <vppinfra/mem.h>
 #include <vppinfra/string.h>
 
-#include "ips_suricata_enhanced_engine.h"
+#include "ips_suricata_engine.h"
 #include "ips_suricata_rule_types.h"
 #include "../ips_logging.h"
 
@@ -71,15 +71,39 @@ ips_hs_match_handler(unsigned int id, unsigned long long from,
         return 0;
 
     /* Find the rule that corresponds to this pattern ID */
-    // TODO: Implement rule lookup by ID
+    u32 rule_id = 0;
+    ips_suricata_rule_t *rule = NULL;
+
+    /* Look up rule ID from pattern ID using engine's rule_to_db_map */
+    uword *p = hash_get(hs_engine.rule_to_db_map, id);
+    if (p) {
+        u32 db_index = p[0];
+        if (db_index < hs_engine.database_count) {
+            ips_hs_database_t *db = &hs_engine.databases[db_index];
+            if (id < db->pattern_count) {
+                rule_id = db->rule_ids[id];
+                /* Get rule from global rule table - this requires integration with rule engine */
+                // rule = ips_rule_table_get_by_id(rule_id);
+            }
+        }
+    }
+
     ips_log_system_async(IPS_LOG_LEVEL_DEBUG,
-                        "Hyperscan match: pattern %u at offset %llu-%llu",
-                        id, from, to);
+                        "Hyperscan match: pattern %u (rule %u) at offset %llu-%llu",
+                        id, rule_id, from, to);
 
     /* Add match to packet context */
     if (packet_ctx->matches_found < IPS_MAX_MATCHES_PER_PACKET) {
-        // TODO: Store match information
+        /* Store match information using existing packet context structure */
+        /* Note: ips_packet_context_t has matched_rules array but not detailed match info */
+        packet_ctx->matched_rules[packet_ctx->matches_found] = rule;  /* Set matched rule */
+        /* TODO: We need to extend ips_packet_context_t to include detailed match offsets */
+
         packet_ctx->matches_found++;
+
+        ips_log_system_async(IPS_LOG_LEVEL_DEBUG,
+                            "Stored match %u: rule %u, pattern %u, offset %llu, length %llu",
+                            packet_ctx->matches_found, rule_id, id, from, to - from);
     }
 
     return 0; /* Continue matching */

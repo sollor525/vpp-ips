@@ -35,6 +35,12 @@ set(IPS_SOURCES
   ips_node.c
   ips_logging.c
   ips_multi_content.c
+  ips_timer_api.c
+
+  # New TCP processing nodes
+  ips_tcp_session_node.c
+  ips_tcp_reorder_node.c
+  ips_tcp_acl_node.c
 
   # Session module
   session/ips_session.c
@@ -54,7 +60,7 @@ set(IPS_SOURCES
   # Detection engine module
   detection/ips_detection_module.c
   detection/ips_inspect_node.c
-  detection/ips_suricata_enhanced_parser.c
+  detection/ips_suricata_parser.c
   detection/ips_suricata_engine_core.c
   detection/ips_suricata_inspect_node.c
   detection/ips_flowbits.c
@@ -67,24 +73,18 @@ set(IPS_SOURCES
   detection/ips_pcre_engine.c
   detection/ips_suricata_cli.c
   detection/ips_detection.c
-  detection/ips_detection_advanced.c
-  detection/ips_detection_optimized.c
-  detection/ips_detection_enhanced.c
   detection/ips_multi_content_detection.c
 
   # Rules module
   rules/ips_rules_module.c
   rules/ips_rule_parser.c
-  rules/ips_rule_parser_advanced.c
-  rules/ips_enhanced_parser.c
-  rules/ips_enhanced_suricata_parser.c
   rules/ips_multi_content_parser.c
 
   # Common utilities
   common/ips_proto.c
   common/ips_response.c
   common/ips_flow.c
-  common/ips_pcre_hyperscan_enhanced.c
+  common/ips_pcre_hyperscan.c
 
   # Protocol detection module
   protocols/ips_protocol_detection.c
@@ -92,9 +92,6 @@ set(IPS_SOURCES
   protocols/ips_tls_parser.c
   protocols/ips_dns_parser.c
   protocols/ips_protocol_detect_node.c
-
-  # Timer API
-  ips_timer_api.c
 )
 
 # Collect all header files
@@ -110,8 +107,8 @@ set(IPS_HEADERS
   detection/ips_detection.h
   detection/ips_detection_types.h
   detection/ips_suricata_rule_types.h
-  detection/ips_suricata_enhanced_parser.h
-  detection/ips_suricata_enhanced_engine.h
+  detection/ips_suricata_parser.h
+  detection/ips_suricata_engine.h
   detection/ips_hyperscan_engine.h
   detection/ips_pcre_engine.h
   detection/ips_suricata_integration.h

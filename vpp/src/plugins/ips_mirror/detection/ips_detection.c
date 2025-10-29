@@ -27,7 +27,7 @@
 #include "ips.h"
 #include "ips_logging.h"
 #include "ips_detection.h"
-// #include <hs/hs.h>  // Temporarily disabled
+#include <hs/hs.h>
 
 /* Forward declarations */
 static int ips_check_non_content_rules (ips_flow_t * flow, vlib_buffer_t * b);
@@ -97,9 +97,9 @@ ips_detection_init (ips_main_t *im)
 {
     clib_error_t *error = 0;
 
-    /* Hyperscan temporarily disabled */
-    /* im->hs_database = NULL; */
-    /* im->hs_compile_error = NULL; */
+    /* Initialize Hyperscan database */
+    im->hs_database = NULL;
+    im->hs_compile_error = NULL;
 
     /* Initialize rule compilation state */
     im->rules_compiled = 0;
@@ -269,18 +269,18 @@ ips_rules_compile (void)
         /* Process PCRE patterns first */
         if (rule->options.pcre_pattern)
         {
-            char *hs_pattern = NULL;
+            u8 *hs_pattern = NULL;
             unsigned int pcre_flags = 0;
-            char *error_msg = NULL;
+            u8 *error_msg = NULL;
 
             /* Convert PCRE to Hyperscan pattern */
             if (ips_convert_pcre_to_hyperscan ((char *) rule->options.pcre_pattern,
                                              &hs_pattern, &pcre_flags, &error_msg) == 0)
             {
                 /* Validate converted pattern */
-                if (validate_pattern_for_hyperscan (hs_pattern) == 0)
+                if (validate_pattern_for_hyperscan ((char*)hs_pattern) == 0)
                 {
-                    patterns[pattern_idx] = hs_pattern;
+                    patterns[pattern_idx] = (char*)hs_pattern;
                     flags[pattern_idx] = HS_FLAG_DOTALL | HS_FLAG_SINGLEMATCH | HS_FLAG_ALLOWEMPTY | pcre_flags;
 
                     /* Encode rule index with special PCRE marker */
@@ -295,13 +295,13 @@ ips_rules_compile (void)
                 {
                     clib_warning ("Converted PCRE pattern validation failed for rule SID:%u: %s",
                                  rule->sid, hs_pattern);
-                    ips_free_converted_pattern (hs_pattern);
+                    ips_free_converted_pattern ((char*)hs_pattern);
                 }
             }
             else
             {
                 clib_warning ("PCRE to Hyperscan conversion failed for rule SID:%u: %s (%s)",
-                             rule->sid, rule->options.pcre_pattern, error_msg ? error_msg : "Unknown error");
+                             rule->sid, rule->options.pcre_pattern, error_msg ? (char*)error_msg : "Unknown error");
                 if (error_msg)
                     vec_free (error_msg);
             }

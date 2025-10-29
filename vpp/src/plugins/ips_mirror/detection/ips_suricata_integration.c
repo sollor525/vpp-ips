@@ -8,9 +8,9 @@
 #include <vlib/vlib.h>
 #include <vppinfra/string.h>
 
-#include "ips_suricata_enhanced_engine.h"
+#include "ips_suricata_engine.h"
 #include "ips_suricata_rule_types.h"
-#include "ips_suricata_enhanced_parser.h"
+#include "ips_suricata_parser.h"
 #include "ips_flowbits.h"
 #include "ips_byte_operations.h"
 #include "ips_rule_index.h"

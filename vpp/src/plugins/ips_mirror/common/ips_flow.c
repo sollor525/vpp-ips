@@ -64,8 +64,6 @@ ips_flow_delete (ips_per_thread_data_t * ptd, ips_flow_t * flow)
         return;
 
     /* Close Hyperscan stream if open */
-    /* Hyperscan temporarily disabled */
-    /*
     if (flow->hs_stream)
     {
         hs_error_t hs_err = hs_close_stream (flow->hs_stream, NULL, NULL, NULL);
@@ -75,7 +73,6 @@ ips_flow_delete (ips_per_thread_data_t * ptd, ips_flow_t * flow)
         }
         flow->hs_stream = NULL;
     }
-    */
 
     /* Clean up TCP reordering state */
     ips_tcp_reorder_cleanup_flow (flow);

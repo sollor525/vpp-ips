@@ -9,7 +9,7 @@
 #include <vppinfra/string.h>
 #include <ctype.h>
 
-#include "ips_suricata_enhanced_engine.h"
+#include "ips_suricata_engine.h"
 #include "ips_suricata_rule_types.h"
 #include "../ips_logging.h"
 

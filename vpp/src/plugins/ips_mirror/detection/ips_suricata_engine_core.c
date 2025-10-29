@@ -11,9 +11,9 @@
 #include <vppinfra/hash.h>
 #include <ctype.h>
 
-#include "ips_suricata_enhanced_engine.h"
+#include "ips_suricata_engine.h"
 #include "ips_suricata_rule_types.h"
-#include "ips_suricata_enhanced_parser.h"
+#include "ips_suricata_parser.h"
 #include "../session/ips_session.h"
 #include "../protocols/ips_protocol_detection.h"
 #include "../ips_logging.h"

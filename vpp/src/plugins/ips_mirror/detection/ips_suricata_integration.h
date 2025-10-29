@@ -19,7 +19,7 @@
 #define __IPS_SURICATA_INTEGRATION_H__
 
 #include <vlib/vlib.h>
-#include "ips_suricata_enhanced_engine.h"
+#include "ips_suricata_engine.h"
 
 /**
  * @brief Initialize Suricata integration

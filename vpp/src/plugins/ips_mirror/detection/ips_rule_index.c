@@ -9,7 +9,7 @@
 #include <vppinfra/hash.h>
 #include <vppinfra/vec.h>
 
-#include "ips_suricata_enhanced_engine.h"
+#include "ips_suricata_engine.h"
 #include "ips_suricata_rule_types.h"
 #include "ips_rule_index.h"
 #include "../ips_logging.h"

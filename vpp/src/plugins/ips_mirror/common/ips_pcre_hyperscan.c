@@ -1,5 +1,5 @@
 /*
- * ips_pcre_hyperscan_enhanced.c - Enhanced VPP IPS Plugin PCRE to Hyperscan Conversion
+ * ips_pcre_hyperscan.c - VPP IPS Plugin PCRE to Hyperscan Conversion
  *
  * Copyright (c) 2024 VPP IPS Project
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -427,7 +427,7 @@ ips_convert_pcre_to_hyperscan_enhanced (const char *pcre_pattern, char **hs_patt
         memcpy (pos, pcre_conversion_table[i].hs_pattern, new_len);
       }
 
-      clib_warning ("PCRE conversion: %s -> %s (%s, priority: %d)",
+      IPS_DEBUG ("PCRE conversion: %s -> %s (%s, priority: %d)",
                    pcre_conversion_table[i].pcre_pattern,
                    pcre_conversion_table[i].hs_pattern,
                    pcre_conversion_table[i].description,

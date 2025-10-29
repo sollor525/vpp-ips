@@ -25,7 +25,7 @@
 #include <vppinfra/clib.h>
 #include <vppinfra/tw_timer_2t_1w_2048sl.h>
 
-#include "session/ips_session.h"
+#include "ips_session.h"
 
 /* Timer wheel configuration */
 #define IPS_TIMER_WHEEL_TICKS_PER_SECOND 100    /* 10ms granularity */

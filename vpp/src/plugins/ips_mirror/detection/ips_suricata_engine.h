@@ -1,5 +1,5 @@
 /*
- * ips_suricata_enhanced_engine.h - VPP IPS Enhanced Suricata Detection Engine
+ * ips_suricata_engine.h - VPP IPS Enhanced Suricata Detection Engine
  *
  * Copyright (c) 2024 VPP IPS Project
  * Licensed under the Apache License, Version 2.0 (the "License");

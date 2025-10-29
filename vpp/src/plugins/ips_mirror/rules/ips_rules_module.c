@@ -31,7 +31,7 @@ ips_rules_module_init (void)
 {
     /* Initialize rule parser */
     /* Rule parser initialization is handled by individual parser modules */
-    clib_warning ("Rules module initialized");
+    IPS_INFO ("Rules module initialized");
 
     return 0;
 }
@@ -45,7 +45,7 @@ ips_rules_module_cleanup (void)
     /* Clear all rules */
     ips_rules_clear ();
 
-    clib_warning ("Rules module cleanup completed");
+    IPS_INFO ("Rules module cleanup completed");
 }
 
 /**
@@ -68,32 +68,32 @@ ips_rules_load_default (void)
             int rules_loaded = ips_load_rules_from_file_enhanced ((char *) im->default_rules_file);
             if (rules_loaded > 0)
             {
-                clib_warning ("Loaded %d rules from %s on startup",
+                IPS_INFO ("Loaded %d rules from %s on startup",
                              rules_loaded, im->default_rules_file);
 
                 // Compile the loaded rules
                 if (ips_rules_compile () >= 0)
                 {
-                    clib_warning ("Rules compiled successfully on startup");
+                    IPS_INFO ("Rules compiled successfully on startup");
                 }
                 else
                 {
-                    clib_warning ("Failed to compile rules on startup");
+                    IPS_WARNING ("Failed to compile rules on startup");
                 }
             }
             else if (rules_loaded < 0)
             {
-                clib_warning ("Failed to load rules from %s on startup",
+                IPS_WARNING ("Failed to load rules from %s on startup",
                              im->default_rules_file);
             }
             else
             {
-                clib_warning ("No rules found in %s", im->default_rules_file);
+                IPS_INFO ("No rules found in %s", im->default_rules_file);
             }
         }
         else
         {
-            clib_warning ("Default rules file %s not found, skipping startup load",
+            IPS_INFO ("Default rules file %s not found, skipping startup load",
                          im->default_rules_file);
         }
     }
@@ -116,7 +116,7 @@ ips_rules_module_init_fn (vlib_main_t * vm)
     /* Load default rules */
     error = ips_rules_load_default ();
     if (error)
-        clib_warning ("Failed to load default rules");
+        IPS_WARNING ("Failed to load default rules");
 
     return 0;
 }

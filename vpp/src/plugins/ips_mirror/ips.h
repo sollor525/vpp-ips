@@ -28,7 +28,8 @@
 #include <vlibapi/api.h>
 #include <vlibmemory/api.h>
 
-// #include <hs/hs.h>  // Temporarily disabled
+/* Hyperscan includes - re-enabled with proper configuration */
+#include <hs/hs.h>
 
 /* IPS Logging Levels */
 typedef enum {
@@ -43,11 +44,11 @@ typedef enum {
 extern ips_log_level_t ips_global_log_level;
 
 /* Logging macros */
-#define IPS_LOG(level, fmt, ...) \\
-    do { \\
-        if (level <= ips_global_log_level) { \\
-            clib_warning(fmt, ##__VA_ARGS__); \\
-        } \\
+#define IPS_LOG(level, fmt, ...) \
+    do { \
+        if (level <= ips_global_log_level) { \
+            clib_warning(fmt, ##__VA_ARGS__); \
+        } \
     } while (0)
 
 #define IPS_ERROR(fmt, ...)   IPS_LOG(IPS_LOG_LEVEL_ERROR, "IPS ERROR: " fmt, ##__VA_ARGS__)
@@ -493,8 +494,8 @@ typedef struct
     /* Packet deduplication for avoiding double counting */
     u32 last_processed_packet_hash;  /* Hash of last processed packet to prevent double counting */
 
-    /* Hyperscan stream state for streaming mode */
-    // hs_stream_t *hs_stream;  // Temporarily disabled
+    /* Hyperscan stream state for streaming mode - re-enabled */
+    hs_stream_t *hs_stream;
 
     /* Stream accumulated state for offset/depth calculation */
     u64 stream_bytes_processed;     /* Total bytes processed in this stream */
@@ -563,9 +564,9 @@ typedef struct
     u8 rules_compiled;
     u8 rules_dirty;
 
-    /* Hyperscan database - Temporarily disabled */
-    // hs_database_t *hs_database;
-    // hs_compile_error_t *hs_compile_error;
+    /* Hyperscan database - re-enabled */
+    hs_database_t *hs_database;
+    hs_compile_error_t *hs_compile_error;
 
     /* Interface configuration */
     u8 *interface_enabled;
@@ -720,11 +721,11 @@ void ips_detect_app_protocol (ips_flow_t * flow);
 int ips_parse_encapsulation (vlib_buffer_t * b, ips_flow_t * flow);
 int ips_parse_from_ip_layer (vlib_buffer_t * b, ips_flow_t * flow, int is_ip6);
 
-/* PCRE to Hyperscan support functions - Temporarily disabled */
-// int ips_convert_pcre_to_hyperscan (const char *pcre_pattern, u8 **hs_pattern,
-//                                   unsigned int *hs_flags, u8 **error_msg);
-// void ips_free_converted_pattern (char *pattern);
-// int ips_validate_pcre_for_hyperscan (const char *pcre_pattern, u8 **error_msg);
+/* PCRE to Hyperscan support functions - re-enabled */
+int ips_convert_pcre_to_hyperscan (const char *pcre_pattern, u8 **hs_pattern,
+                                   unsigned int *hs_flags, u8 **error_msg);
+void ips_free_converted_pattern (char *pattern);
+int ips_validate_pcre_for_hyperscan (const char *pcre_pattern, u8 **error_msg);
 
 /* Utility functions for string handling */
 char *ips_strdup (const char *s);

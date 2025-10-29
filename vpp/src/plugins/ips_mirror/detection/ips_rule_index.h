@@ -19,7 +19,7 @@
 #define __included_ips_rule_index_h__
 
 #include "ips_suricata_rule_types.h"
-#include "ips_suricata_enhanced_engine.h"
+#include "ips_suricata_engine.h"
 
 /* Rule index entry */
 typedef struct {

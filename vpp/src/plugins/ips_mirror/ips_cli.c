@@ -20,6 +20,7 @@
 #include <vlib/cli.h>
 
 #include "ips.h"
+#include "rules/ips_rules_module.h"
 
 /**
  * @brief Enable/disable IPS on interface
@@ -171,7 +172,7 @@ ips_rules_load_command (vlib_main_t * __clib_unused vm,
     char *filename = NULL;
     u8 reload = 0;
     u8 use_default = 0;
-    //int rv = 0;
+    int rv = 0;
 
     while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
@@ -219,18 +220,15 @@ ips_rules_load_command (vlib_main_t * __clib_unused vm,
         im->rules_dirty = 1;
     }
 
-    /* temporarily disabled - function not available */
-    vlib_cli_output (vm, "Rule loading temporarily disabled - advanced parser not compiled");
-    //rv = 0;
+    /* Load rules from file */
+    rv = ips_load_rules_from_file_enhanced (filename);
 
-    /* rv = ips_load_rules_from_file_enhanced (filename); */
-
-    /* if (rv < 0)
+    if (rv < 0)
     {
         return clib_error_return (0, "Failed to load rules from file: %s", filename);
-    } */
+    }
 
-    /* vlib_cli_output (vm, "Successfully loaded %d rules (enhanced parser)", rv); */
+    vlib_cli_output (vm, "Successfully loaded %d rules (enhanced parser)", rv);
 
     /* Recompile rules */
     if (ips_rules_compile () < 0)

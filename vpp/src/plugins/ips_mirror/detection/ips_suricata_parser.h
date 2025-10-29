@@ -1,5 +1,5 @@
 /*
- * ips_suricata_enhanced_parser.h - VPP IPS Enhanced Suricata Rule Parser
+ * ips_suricata_parser.h - VPP IPS Enhanced Suricata Rule Parser
  *
  * Copyright (c) 2024 VPP IPS Project
  * Licensed under the Apache License, Version 2.0 (the "License");

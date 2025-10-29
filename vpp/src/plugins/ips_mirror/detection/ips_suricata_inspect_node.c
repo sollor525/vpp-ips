@@ -14,7 +14,7 @@
 #include "../ips.h"
 #include "../session/ips_session.h"
 #include "../protocols/ips_protocol_detection.h"
-#include "ips_suricata_enhanced_engine.h"
+#include "ips_suricata_engine.h"
 #include "ips_suricata_rule_types.h"
 #include "ips_flowbits.h"
 #include "ips_byte_operations.h"

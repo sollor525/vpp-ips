@@ -11,7 +11,7 @@
 #include <ctype.h>
 #include <stdarg.h>
 
-#include "ips_suricata_enhanced_parser.h"
+#include "ips_suricata_parser.h"
 #include "../ips_logging.h"
 
 /* Global parser state */

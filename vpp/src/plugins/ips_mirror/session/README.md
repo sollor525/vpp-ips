@@ -1,23 +1,233 @@
-# IPS Session Module - VPP IPS Plugin Session Management
+# IPS Mirror Session Module
 
-## 概述
+## 📋 模块概述
 
-IPS Session 模块是 VPP IPS 插件的核心会话管理系统，提供高效的五元组会话跟踪、状态管理和超时处理功能。该模块支持 IPv4/IPv6 双栈协议，提供精确的会话识别和管理能力，为 IPS 系统的检测和阻断功能提供基础支撑。
+IPS Mirror Session模块负责网络会话的管理、维护和生命周期控制。该模块实现了高效的会话跟踪、TCP重排序、定时器管理等功能，为入侵检测系统提供完整的会话上下文信息。模块采用高性能的Timer Wheel算法进行会话超时管理，支持数百万并发会话的高效处理。
 
-## 架构设计
+## 🏗️ 架构设计
 
 ### 核心组件
 
+- **会话管理** (`ips_session.c/.h`) - 网络会话的创建、查找和销毁
+- **定时器管理** (`ips_session_timer.c/.h`) - 基于Timer Wheel的会话超时处理
+- **TCP重排序** (`ips_tcp_reorder.c`) - TCP流的重排序和重组
+- **会话CLI** (`ips_session_cli.c`) - 会话管理的命令行接口
+- **定时器CLI** (`ips_timer_cli.c`) - 定时器管理的命令行接口
+
+### 设计原则
+
+本模块严格遵循SOLID原则：
+
+- **单一职责原则** - 每个组件专注于特定的会话管理功能
+- **开闭原则** - 支持新会话类型的扩展，无需修改现有代码
+- **里氏替换原则** - 不同的定时器算法可以互相替换
+- **接口隔离原则** - 提供最小化的会话管理接口
+- **依赖倒置原则** - 依赖抽象的会话接口而非具体实现
+
+## 📁 文件结构
+
 ```
-IPS Session 架构
-├── 会话管理器 (ips_session_manager_t)
-│   ├── 线程本地会话池
-│   ├── 全局会话统计
-│   ├── 配置管理
-│   └── 生命周期管理
-├── 会话数据结构 (ips_session_t)
-│   ├── 五元组键值
-│   ├── 协议状态信息
+session/
+├── README.md                    # 本文档
+├── ips_session.c               # 会话管理核心实现
+├── ips_session.h               # 会话管理接口定义
+├── ips_session_timer.c         # 定时器管理实现
+├── ips_session_timer.h         # 定时器管理接口
+├── ips_tcp_reorder.c           # TCP重排序实现
+├── ips_session_cli.c           # 会话管理CLI
+└── ips_timer_cli.c             # 定时器管理CLI
+```
+
+## 🔧 核心功能
+
+### 1. 会话管理 (ips_session.c/.h)
+
+提供完整的网络会话生命周期管理，支持TCP、UDP、ICMP等多种协议。
+
+#### 主要功能
+
+- **会话创建和销毁**: 自动管理会话的创建、更新和销毁
+- **协议检测**: 智能识别会话的应用层协议
+- **状态跟踪**: 跟踪会话的连接状态和方向性
+- **双向流管理**: 管理客户端到服务器和服务器到客户端的双向流
+- **统计信息**: 收集和维护会话相关的统计数据
+
+#### 核心数据结构
+
+```c
+typedef struct {
+    /* 会话标识符 */
+    ips_session_key_t key;
+
+    /* 流信息 */
+    ips_flow_t client_flow;        // 客户端到服务器流
+    ips_flow_t server_flow;        // 服务器到客户端流
+
+    /* 会话状态 */
+    u8 state;                      // 会话状态
+    u8 direction;                  // 流向标识
+    u8 protocol;                   // 协议类型
+
+    /* 时间戳 */
+    f64 first_seen;                // 首次见到时间
+    f64 last_seen;                 // 最后见到时间
+    f64 last_activity;             // 最后活动时间
+
+    /* 统计信息 */
+    u64 packets_seen;              // 见到的数据包数
+    u64 bytes_seen;                // 见到的字节数
+    u64 client_packets;            // 客户端数据包数
+    u64 server_packets;            // 服务器数据包数
+    u64 client_bytes;              // 客户端字节数
+    u64 server_bytes;              // 服务器字节数
+
+    /* 标志位 */
+    u32 flags;                     // 会话标志位
+
+    /* 定时器相关 */
+    u32 timer_index;               // 定时器索引
+    f64 expiration_time;           // 过期时间
+
+    /* 扩展字段 */
+    void *application_data;        // 应用层数据指针
+} ips_session_t;
+```
+
+#### 主要API
+
+```c
+// 创建和查找会话
+ips_session_t *ips_session_create_ipv4(u32 thread_index,
+                                       ip4_header_t *ip4h,
+                                       tcp_header_t *tcph);
+
+ips_session_t *ips_session_create_ipv6(u32 thread_index,
+                                       ip6_header_t *ip6h,
+                                       tcp_header_t *tcph);
+
+ips_session_t *ips_session_lookup_ipv4(u32 thread_index,
+                                       ip4_header_t *ip4h,
+                                       tcp_header_t *tcph);
+
+// 更新会话状态
+int ips_session_update(ips_session_t *session,
+                      vlib_buffer_t *buffer,
+                      u8 is_to_server);
+
+// 会话销毁
+void ips_session_destroy(ips_session_t *session, u32 thread_index);
+
+// 会话统计
+void ips_session_get_stats(ips_session_t *session,
+                          ips_session_stats_t *stats);
+```
+
+### 2. 定时器管理 (ips_session_timer.c/.h)
+
+实现基于Timer Wheel算法的高效会话超时管理系统。
+
+#### Timer Wheel算法特性
+
+- **O(1)复杂度**: 定时器操作的时间复杂度为O(1)
+- **高精度**: 支持毫秒级精度的时间管理
+- **可扩展**: 支持数百万定时器的高效管理
+- **低内存**: 相比传统堆算法，内存使用更少
+- **批量处理**: 支持批量过期处理，提高效率
+
+#### 核心算法
+
+```c
+/* Timer Wheel配置 */
+#define IPS_TIMER_WHEEL_TICKS_PER_SECOND 100    // 10ms精度
+#define IPS_TIMER_WHEEL_MAX_INTERVAL (3600 * 100)  // 1小时最大间隔
+#define IPS_TIMER_WHEEL_SIZE 2048                // Timer Wheel大小
+
+/* Timer Wheel数据结构 */
+typedef struct {
+    u64 current_tick;               // 当前时钟滴答
+    u32 wheel_size;                 // 轮盘大小
+    u32 ticks_per_second;           // 每秒滴答数
+    tw_timer_wheel_2t_1w_2048sl_t *timer_wheel;  // Timer Wheel实例
+} ips_session_timer_wheel_t;
+```
+
+#### 主要API
+
+```c
+// 初始化定时器系统
+clib_error_t *ips_session_timer_init(f64 ticks_per_second,
+                                    f64 max_timer_interval);
+
+// 启动会话定时器
+void ips_session_timer_start(ips_session_t *session,
+                            f64 timeout_interval);
+
+// 停止会话定时器
+void ips_session_timer_stop(ips_session_t *session);
+
+// 更新定时器
+void ips_session_timer_update(ips_session_t *session,
+                             f64 new_timeout);
+
+// 处理过期定时器
+void ips_session_timer_process_expired(u32 thread_index, f64 now);
+
+// 获取定时器统计
+void ips_session_timer_get_stats(u32 thread_index,
+                                ips_session_timer_stats_t *stats);
+```
+
+### 3. TCP重排序 (ips_tcp_reorder.c)
+
+实现TCP流的重排序和重组功能，处理乱序到达的TCP数据包。
+
+#### 重排序算法
+
+- **滑动窗口**: 基于滑动窗口的重排序机制
+- **缓冲管理**: 智能的数据包缓冲和释放
+- **顺序保证**: 确保数据按正确顺序传递给上层
+- **内存优化**: 高效的内存使用和垃圾回收
+
+#### 核心功能
+
+```c
+// TCP重排序返回码
+typedef enum {
+    IPS_TCP_REORDER_RC_OK,              // 数据包处理成功
+    IPS_TCP_REORDER_RC_BUFFERED,        // 数据包被缓冲
+    IPS_TCP_REORDER_RC_ERROR,           // 处理错误
+    IPS_TCP_REORDER_RC_NO_PAYLOAD,      // 无负载数据
+    IPS_TCP_REORDER_RC_DUPLICATE,       // 重复数据包
+    IPS_TCP_REORDER_RC_WINDOW_FULL,     // 重排序窗口满
+    IPS_TCP_REORDER_RC_COMPLETED        // 重排序完成
+} ips_tcp_reorder_rc_t;
+
+// 重排序配置
+#define IPS_TCP_REORDER_MAX_BUFFERS 32      // 最大缓冲区数
+#define IPS_TCP_REORDER_TIMEOUT 5.0         // 缓冲超时时间
+#define IPS_TCP_REORDER_WINDOW 65536       // 重排序窗口大小
+```
+
+#### 主要API
+
+```c
+// 初始化流的TCP重排序
+void ips_tcp_reorder_init_flow(ips_flow_t *flow);
+
+// 处理TCP数据包
+int ips_tcp_reorder_process_packet(ips_flow_t *flow,
+                                  vlib_buffer_t *b,
+                                  u8 **ordered_data,
+                                  u32 *ordered_len);
+
+// 清理流的TCP重排序
+void ips_tcp_reorder_cleanup_flow(ips_flow_t *flow);
+
+// 获取重排序统计
+void ips_tcp_reorder_get_stats(ips_flow_t *flow,
+                               u32 *buffered_src,
+                               u32 *buffered_dst);
+```
 │   ├── 计时器和超时
 │   └── 统计和元数据
 ├── 会话键值管理

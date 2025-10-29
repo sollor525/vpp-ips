@@ -9,12 +9,12 @@
 #include <vppinfra/hash.h>
 #include <vppinfra/string.h>
 
-#include "ips_suricata_enhanced_engine.h"
+#include "ips_suricata_engine.h"
 #include "ips_suricata_rule_types.h"
 #include "../session/ips_session.h"
 #include "../ips_logging.h"
 
-/* Flowbit state entry - defined in ips_suricata_enhanced_engine.h */
+/* Flowbit state entry - defined in ips_suricata_engine.h */
 
 /* Flowbit key for hash */
 typedef struct {
