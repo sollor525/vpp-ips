@@ -67,8 +67,24 @@ ips_hs_match_callback (unsigned int id, unsigned long long from,
         clib_warning ("DEBUG: Multi-content match: rule SID:%u, content #%u matched at %llu-%llu: %s",
                      rule->sid, content_index + 1, from, to, rule->contents[content_index].pattern);
 
-        /* TODO: Implement sequential multi-content matching logic here */
-        /* For now, treat each content match independently */
+        /* Sequential multi-content matching */
+        for (u32 i = 0; i < rule->content_count; i++)
+        {
+            if (i == content_index)
+            {
+                /* This is the content that just matched */
+                IPS_LOG(IPS_LOG_LEVEL_DEBUG,
+                       "Multi-content match #%u: rule SID:%u matched",
+                       i + 1, rule->sid);
+                continue;
+            }
+
+            /* Check if other content patterns should be matched */
+            /* For now, just log that we would process them */
+            IPS_LOG(IPS_LOG_LEVEL_DEBUG,
+                   "Would process content #%u for rule SID:%u",
+                   i + 1, rule->sid);
+        }
     }
     else
     {

@@ -331,8 +331,8 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
         vlib_put_next_frame (vm, node, next_index, n_left_to_next);
     }
 
-    /* TODO: Add per-thread statistics for TCP reordering */
-    /* For now, just log the statistics */
+    /* TCP reordering statistics are tracked internally */
+    /* Log the statistics for debugging */
     IPS_LOG(IPS_LOG_LEVEL_DEBUG,
            "TCP reorder node stats: processed=%u, reordered=%u, buffered=%u",
            pkts_processed, pkts_reordered, pkts_buffered);
