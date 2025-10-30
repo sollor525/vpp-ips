@@ -38,14 +38,11 @@ typedef struct
     char matched_sids[256];  /* Comma-separated list of matched SIDs */
 } ips_suricata_inspect_trace_t;
 
-/* Next node indices */
+/* Next node indices - simplified for mirror traffic processing */
 typedef enum
 {
-    IPS_SURICATA_INSPECT_NEXT_DROP,
-    IPS_SURICATA_INSPECT_NEXT_BLOCK,      /* Send to block node */
-    IPS_SURICATA_INSPECT_NEXT_IP4_LOOKUP,
-    IPS_SURICATA_INSPECT_NEXT_IP6_LOOKUP,
-    IPS_SURICATA_INSPECT_NEXT_OUTPUT,
+    IPS_SURICATA_INSPECT_NEXT_DROP,       /* Drop malformed/processed packets */
+    IPS_SURICATA_INSPECT_NEXT_BLOCK,      /* Send to block node for action */
     IPS_SURICATA_INSPECT_N_NEXT,
 } ips_suricata_inspect_next_t;
 
@@ -81,6 +78,7 @@ static char *suricata_inspect_error_strings[] = {
 };
 
 /* Static function prototypes */
+// todo
 static u8 *format_suricata_inspect_trace (u8 *s, va_list *args);
 static uword suricata_inspect_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * frame);
 
@@ -97,10 +95,7 @@ VLIB_REGISTER_NODE (suricata_inspect_node) = {
     .n_next_nodes = IPS_SURICATA_INSPECT_N_NEXT,
     .next_nodes = {
         [IPS_SURICATA_INSPECT_NEXT_DROP] = "error-drop",
-        [IPS_SURICATA_INSPECT_NEXT_BLOCK] = "ips-block-node",
-        [IPS_SURICATA_INSPECT_NEXT_IP4_LOOKUP] = "ip4-lookup",
-        [IPS_SURICATA_INSPECT_NEXT_IP6_LOOKUP] = "ip6-lookup",
-        [IPS_SURICATA_INSPECT_NEXT_OUTPUT] = "error-output",
+        [IPS_SURICATA_INSPECT_NEXT_BLOCK] = "ips-block-node"
     },
 };
 
@@ -301,7 +296,7 @@ suricata_inspect_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_fra
     n_left_to_next = node->cached_next_index;
 
     while (n_left_from > 0) {
-        u32 next0 = IPS_SURICATA_INSPECT_NEXT_IP4_LOOKUP;  /* Default next */
+        u32 next0 = IPS_SURICATA_INSPECT_NEXT_DROP;  /* Default: drop processed mirror traffic */
         vlib_buffer_t *b0 = b[0];
         ips_session_t *session0 = NULL;
         int error = 0;

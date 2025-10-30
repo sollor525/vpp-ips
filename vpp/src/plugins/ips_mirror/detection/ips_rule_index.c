@@ -445,13 +445,13 @@ ips_find_candidate_rules(ips_packet_context_t *ctx, u32 *count)
     }
 
     /* Content-based optimization for application layer data */
-    if (ctx->data_len > 0 && candidates && *count > 0)
+    if (ctx->packet_len > 0 && candidates && *count > 0)
     {
         /* Content index lookup could be implemented here */
         /* For now, just use the protocol-based candidates */
         IPS_LOG(IPS_LOG_LEVEL_DEBUG,
                "Content-based optimization: %u bytes of data available",
-               ctx->data_len);
+               ctx->packet_len);
     }
 
     if (*count == 0) {

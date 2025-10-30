@@ -42,9 +42,7 @@ typedef enum
 {
     IPS_TCP_ACL_NEXT_DROP,
     IPS_TCP_ACL_NEXT_BLOCK,
-    IPS_TCP_ACL_NEXT_PROTOCOL_DETECT,
-    IPS_TCP_ACL_NEXT_IP4_LOOKUP,
-    IPS_TCP_ACL_NEXT_IP6_LOOKUP,
+    IPS_TCP_ACL_NEXT_TCP_REORDER,   /* Only non-blocked packets go to reordering */
     IPS_TCP_ACL_N_NEXT,
 } ips_tcp_acl_next_t;
 
@@ -110,7 +108,7 @@ ips_tcp_acl_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
         {
             u32 bi0;
             vlib_buffer_t *b0;
-            u32 next0 = IPS_TCP_ACL_NEXT_IP4_LOOKUP;
+            u32 next0 = IPS_TCP_ACL_NEXT_DROP;  /* Default: drop for mirror traffic */
             u32 sw_if_index0;
             u32 session_index;
             u16 src_port, dst_port;
@@ -190,8 +188,8 @@ ips_tcp_acl_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                             }
                             else if (acl_action == IPS_ACL_ACTION_PERMIT)
                             {
-                                /* ACL permits - send to protocol detection for IPS inspection */
-                                next0 = IPS_TCP_ACL_NEXT_PROTOCOL_DETECT;
+                                /* ACL permits - send to TCP reordering for sequence handling */
+                                next0 = IPS_TCP_ACL_NEXT_TCP_REORDER;
                                 pkts_permitted++;
 
                                 IPS_LOG(IPS_LOG_LEVEL_DEBUG,
@@ -201,7 +199,7 @@ ips_tcp_acl_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                             else
                             {
                                 /* Unknown action - permit by default */
-                                next0 = IPS_TCP_ACL_NEXT_PROTOCOL_DETECT;
+                                next0 = IPS_TCP_ACL_NEXT_TCP_REORDER;
                                 pkts_permitted++;
 
                                 IPS_LOG(IPS_LOG_LEVEL_WARNING,
@@ -215,14 +213,14 @@ ips_tcp_acl_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                     }
                     else
                     {
-                        /* Session not found - forward normally */
-                        next0 = IPS_TCP_ACL_NEXT_IP4_LOOKUP;
+                        /* Session not found - drop (mirror traffic) */
+                        next0 = IPS_TCP_ACL_NEXT_DROP;
                     }
                 }
                 else
                 {
-                    /* Non-TCP packet - forward normally */
-                    next0 = IPS_TCP_ACL_NEXT_IP4_LOOKUP;
+                    /* Non-TCP packet - drop (mirror traffic) */
+                    next0 = IPS_TCP_ACL_NEXT_DROP;
                 }
             }
             else
@@ -280,8 +278,8 @@ ips_tcp_acl_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                             }
                             else if (acl_action == IPS_ACL_ACTION_PERMIT)
                             {
-                                /* ACL permits - send to protocol detection for IPS inspection */
-                                next0 = IPS_TCP_ACL_NEXT_PROTOCOL_DETECT;
+                                /* ACL permits - send to TCP reordering for sequence handling */
+                                next0 = IPS_TCP_ACL_NEXT_TCP_REORDER;
                                 pkts_permitted++;
 
                                 IPS_LOG(IPS_LOG_LEVEL_DEBUG,
@@ -291,7 +289,7 @@ ips_tcp_acl_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                             else
                             {
                                 /* Unknown action - permit by default */
-                                next0 = IPS_TCP_ACL_NEXT_PROTOCOL_DETECT;
+                                next0 = IPS_TCP_ACL_NEXT_TCP_REORDER;
                                 pkts_permitted++;
 
                                 IPS_LOG(IPS_LOG_LEVEL_WARNING,
@@ -305,14 +303,14 @@ ips_tcp_acl_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                     }
                     else
                     {
-                        /* Session not found - forward normally */
-                        next0 = IPS_TCP_ACL_NEXT_IP6_LOOKUP;
+                        /* Session not found - drop (mirror traffic) */
+                        next0 = IPS_TCP_ACL_NEXT_DROP;
                     }
                 }
                 else
                 {
-                    /* Non-TCP packet - forward normally */
-                    next0 = IPS_TCP_ACL_NEXT_IP6_LOOKUP;
+                    /* Non-TCP packet - drop (mirror traffic) */
+                    next0 = IPS_TCP_ACL_NEXT_DROP;
                 }
             }
 
@@ -375,10 +373,8 @@ VLIB_REGISTER_NODE (ips_tcp_acl_node) = {
     .n_next_nodes = IPS_TCP_ACL_N_NEXT,
     .next_nodes = {
         [IPS_TCP_ACL_NEXT_DROP] = "error-drop",
-        [IPS_TCP_ACL_NEXT_BLOCK] = "ips-block",
-        [IPS_TCP_ACL_NEXT_PROTOCOL_DETECT] = "ips-protocol-detect",
-        [IPS_TCP_ACL_NEXT_IP4_LOOKUP] = "ip4-lookup",
-        [IPS_TCP_ACL_NEXT_IP6_LOOKUP] = "ip6-lookup",
+        [IPS_TCP_ACL_NEXT_BLOCK] = "ips-block-node",
+        [IPS_TCP_ACL_NEXT_TCP_REORDER] = "ips-tcp-reorder",
     },
 };
 
@@ -394,10 +390,8 @@ VLIB_REGISTER_NODE (ips_tcp_acl_ip6_node) = {
     .n_next_nodes = IPS_TCP_ACL_N_NEXT,
     .next_nodes = {
         [IPS_TCP_ACL_NEXT_DROP] = "error-drop",
-        [IPS_TCP_ACL_NEXT_BLOCK] = "ips-block",
-        [IPS_TCP_ACL_NEXT_PROTOCOL_DETECT] = "ips-protocol-detect",
-        [IPS_TCP_ACL_NEXT_IP4_LOOKUP] = "ip4-lookup",
-        [IPS_TCP_ACL_NEXT_IP6_LOOKUP] = "ip6-lookup",
+        [IPS_TCP_ACL_NEXT_BLOCK] = "ips-block-node",
+        [IPS_TCP_ACL_NEXT_TCP_REORDER] = "ips-tcp-reorder",
     },
 };
 

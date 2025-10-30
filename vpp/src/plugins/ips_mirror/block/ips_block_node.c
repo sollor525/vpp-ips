@@ -27,12 +27,10 @@
 
 #include "ips_block.h"
 
-/* Blocking packet processing next nodes */
+/* Blocking packet processing next nodes - simplified for mirror traffic */
 typedef enum
 {
     IPS_BLOCK_NEXT_DROP,
-    IPS_BLOCK_NEXT_IP4_LOOKUP,
-    IPS_BLOCK_NEXT_IP6_LOOKUP,
     IPS_BLOCK_N_NEXT,
 } ips_block_next_t;
 
@@ -174,8 +172,6 @@ VLIB_REGISTER_NODE (ips_block_node) = {
     .n_next_nodes = IPS_BLOCK_N_NEXT,
     .next_nodes = {
         [IPS_BLOCK_NEXT_DROP] = "error-drop",
-        [IPS_BLOCK_NEXT_IP4_LOOKUP] = "ip4-lookup",
-        [IPS_BLOCK_NEXT_IP6_LOOKUP] = "ip6-lookup",
     },
 };
 

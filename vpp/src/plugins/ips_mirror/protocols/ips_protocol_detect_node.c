@@ -21,14 +21,12 @@ typedef struct
     u8 confidence;
 } ips_proto_detect_trace_t;
 
-/* Next node indices */
+/* Next node indices - simplified for mirror traffic */
 typedef enum
 {
     IPS_PROTO_NEXT_DROP,
     IPS_PROTO_NEXT_IPS_INSPECT,  /* Send to IPS rule matching node */
     IPS_PROTO_NEXT_BLOCK,
-    IPS_PROTO_NEXT_IP4_LOOKUP,
-    IPS_PROTO_NEXT_IP6_LOOKUP,
     IPS_PROTO_N_NEXT,
 } ips_proto_detect_next_t;
 
@@ -134,7 +132,7 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
     {
         u32 bi0;
         vlib_buffer_t *b0;
-        u32 next0 = IPS_PROTO_NEXT_IP4_LOOKUP;  /* Default: forward */
+        u32 next0 = IPS_PROTO_NEXT_DROP;  /* Default: drop for mirror traffic */
         
         bi0 = from[0];
         b0 = vlib_get_buffer (vm, bi0);
@@ -212,9 +210,9 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
             }
             else
             {
-                /* Protocol not yet detected, forward for now */
+                /* Protocol not yet detected, drop for mirror traffic */
                 /* Continue detection on next packets */
-                next0 = is_ip6 ? IPS_PROTO_NEXT_IP6_LOOKUP : IPS_PROTO_NEXT_IP4_LOOKUP;
+                next0 = IPS_PROTO_NEXT_DROP;
             }
             
             /* Add trace if enabled */
@@ -230,8 +228,8 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
         }
         else
         {
-            /* No session or no payload - forward normally */
-            next0 = is_ip6 ? IPS_PROTO_NEXT_IP6_LOOKUP : IPS_PROTO_NEXT_IP4_LOOKUP;
+            /* No session or no payload - drop for mirror traffic */
+            next0 = IPS_PROTO_NEXT_DROP;
         }
         
         /* Enqueue packet to next node */
@@ -256,8 +254,6 @@ VLIB_REGISTER_NODE (ips_protocol_detect_node) = {
         [IPS_PROTO_NEXT_DROP] = "error-drop",
         [IPS_PROTO_NEXT_IPS_INSPECT] = "ips-inspect",
         [IPS_PROTO_NEXT_BLOCK] = "ips-block-node",
-        [IPS_PROTO_NEXT_IP4_LOOKUP] = "ip4-lookup",
-        [IPS_PROTO_NEXT_IP6_LOOKUP] = "ip6-lookup",
     },
 };
 

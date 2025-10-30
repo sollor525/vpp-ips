@@ -118,47 +118,9 @@ VLIB_CLI_COMMAND (ips_show_stats_cmd, static) = {
     .function = ips_show_stats_command,
 };
 
-/**
- * @brief Show IPS rules
- */
-static clib_error_t *
-ips_show_rules_command (vlib_main_t * __clib_unused vm,
-                       unformat_input_t * __clib_unused input,
-                       vlib_cli_command_t * __clib_unused cmd)
-{
-    ips_main_t *im = &ips_main;
-    u32 i;
+/* Function moved to suricata_cli.c to avoid duplication */
 
-    vlib_cli_output (vm, "IPS Rules (%u total):", vec_len (im->rules));
-
-    for (i = 0; i < vec_len (im->rules); i++)
-    {
-        ips_rule_t *rule = &im->rules[i];
-
-        if (!(rule->flags & IPS_RULE_FLAG_ENABLED))
-            continue;
-
-        vlib_cli_output (vm, "  Rule %u: %s",
-                        rule->rule_id,
-                        rule->msg ? (char *) rule->msg : "No message");
-        vlib_cli_output (vm, "    Action: %s, Protocol: %u",
-                        rule->action == IPS_ACTION_DROP ? "DROP" :
-                        rule->action == IPS_ACTION_ALERT ? "ALERT" :
-                        rule->action == IPS_ACTION_REJECT ? "REJECT" :
-                        rule->action == IPS_ACTION_LOG ? "LOG" : "PASS",
-                        rule->protocol);
-        vlib_cli_output (vm, "    Matches: %llu, Alerts: %llu",
-                        rule->match_count, rule->alert_count);
-    }
-
-    return 0;
-}
-
-VLIB_CLI_COMMAND (ips_show_rules_cmd, static) = {
-    .path = "show ips rules",
-    .short_help = "show ips rules",
-    .function = ips_show_rules_command,
-};
+/* Command moved to suricata_cli.c to avoid duplication */
 
 /**
  * @brief Load IPS rules from file

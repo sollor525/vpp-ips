@@ -41,9 +41,7 @@ typedef struct
 typedef enum
 {
     IPS_TCP_REORDER_NEXT_DROP,
-    IPS_TCP_REORDER_NEXT_TCP_ACL,
-    IPS_TCP_REORDER_NEXT_IP4_LOOKUP,
-    IPS_TCP_REORDER_NEXT_IP6_LOOKUP,
+    IPS_TCP_REORDER_NEXT_INSPECT_DETECT,  /* Final step: intrusion detection */
     IPS_TCP_REORDER_N_NEXT,
 } ips_tcp_reorder_next_t;
 
@@ -109,7 +107,7 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
         {
             u32 bi0;
             vlib_buffer_t *b0;
-            u32 next0 = IPS_TCP_REORDER_NEXT_IP4_LOOKUP;
+            u32 next0 = IPS_TCP_REORDER_NEXT_DROP;  /* Default: drop for mirror traffic */
             u32 sw_if_index0;
             u32 session_index;
             u16 src_port, dst_port;
@@ -183,8 +181,8 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 
                         if (reorder_result >= 0 && ordered_data && ordered_len > 0)
                         {
-                            /* Successfully reordered - send to TCP ACL node */
-                            next0 = IPS_TCP_REORDER_NEXT_TCP_ACL;
+                            /* Successfully reordered - send to intrusion detection node */
+                            next0 = IPS_TCP_REORDER_NEXT_INSPECT_DETECT;
                             pkts_reordered++;
 
                             /* Update session sequence numbers if reordering changed them */
@@ -203,8 +201,8 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                         }
                         else
                         {
-                            /* Reordering failed - forward to TCP ACL anyway */
-                            next0 = IPS_TCP_REORDER_NEXT_TCP_ACL;
+                            /* Reordering failed - send to intrusion detection anyway */
+                            next0 = IPS_TCP_REORDER_NEXT_INSPECT_DETECT;
 
                             IPS_LOG(IPS_LOG_LEVEL_WARNING,
                                    "TCP reordering failed for session %u, forwarding anyway",
@@ -219,8 +217,8 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                 }
                 else
                 {
-                    /* Non-TCP packet - forward normally */
-                    next0 = IPS_TCP_REORDER_NEXT_IP4_LOOKUP;
+                    /* Non-TCP packet - drop (mirror traffic) */
+                    next0 = IPS_TCP_REORDER_NEXT_DROP;
                 }
             }
             else
@@ -272,8 +270,8 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 
                         if (reorder_result >= 0 && ordered_data && ordered_len > 0)
                         {
-                            /* Successfully reordered - send to TCP ACL node */
-                            next0 = IPS_TCP_REORDER_NEXT_TCP_ACL;
+                            /* Successfully reordered - send to intrusion detection node */
+                            next0 = IPS_TCP_REORDER_NEXT_INSPECT_DETECT;
                             pkts_reordered++;
 
                             /* Update session sequence numbers if reordering changed them */
@@ -292,8 +290,8 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                         }
                         else
                         {
-                            /* Reordering failed - forward to TCP ACL anyway */
-                            next0 = IPS_TCP_REORDER_NEXT_TCP_ACL;
+                            /* Reordering failed - send to intrusion detection anyway */
+                            next0 = IPS_TCP_REORDER_NEXT_INSPECT_DETECT;
 
                             IPS_LOG(IPS_LOG_LEVEL_WARNING,
                                    "TCP reordering failed for session %u, forwarding anyway",
@@ -308,8 +306,8 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                 }
                 else
                 {
-                    /* Non-TCP packet - forward normally */
-                    next0 = IPS_TCP_REORDER_NEXT_IP6_LOOKUP;
+                    /* Non-TCP packet - drop (mirror traffic) */
+                    next0 = IPS_TCP_REORDER_NEXT_DROP;
                 }
             }
 
@@ -372,9 +370,7 @@ VLIB_REGISTER_NODE (ips_tcp_reorder_node) = {
     .n_next_nodes = IPS_TCP_REORDER_N_NEXT,
     .next_nodes = {
         [IPS_TCP_REORDER_NEXT_DROP] = "error-drop",
-        [IPS_TCP_REORDER_NEXT_TCP_ACL] = "ips-tcp-acl",
-        [IPS_TCP_REORDER_NEXT_IP4_LOOKUP] = "ip4-lookup",
-        [IPS_TCP_REORDER_NEXT_IP6_LOOKUP] = "ip6-lookup",
+        [IPS_TCP_REORDER_NEXT_INSPECT_DETECT] = "ips-inspect",
     },
 };
 
@@ -390,9 +386,7 @@ VLIB_REGISTER_NODE (ips_tcp_reorder_ip6_node) = {
     .n_next_nodes = IPS_TCP_REORDER_N_NEXT,
     .next_nodes = {
         [IPS_TCP_REORDER_NEXT_DROP] = "error-drop",
-        [IPS_TCP_REORDER_NEXT_TCP_ACL] = "ips-tcp-acl",
-        [IPS_TCP_REORDER_NEXT_IP4_LOOKUP] = "ip4-lookup",
-        [IPS_TCP_REORDER_NEXT_IP6_LOOKUP] = "ip6-lookup",
+        [IPS_TCP_REORDER_NEXT_INSPECT_DETECT] = "ips-inspect",
     },
 };
 

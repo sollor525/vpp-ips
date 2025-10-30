@@ -40,9 +40,7 @@ typedef struct
 typedef enum
 {
     IPS_TCP_SESSION_NEXT_DROP,
-    IPS_TCP_SESSION_NEXT_TCP_REORDER,
-    IPS_TCP_SESSION_NEXT_IP4_LOOKUP,
-    IPS_TCP_SESSION_NEXT_IP6_LOOKUP,
+    IPS_TCP_SESSION_NEXT_TCP_ACL,      /* Direct to ACL after session management */
     IPS_TCP_SESSION_N_NEXT,
 } ips_tcp_session_next_t;
 
@@ -104,7 +102,7 @@ ips_tcp_session_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
         {
             u32 bi0;
             vlib_buffer_t *b0;
-            u32 next0 = IPS_TCP_SESSION_NEXT_IP4_LOOKUP;
+            u32 next0 = IPS_TCP_SESSION_NEXT_DROP;  /* Default: drop for mirror traffic */
             u32 sw_if_index0;
             ips_session_t *session = NULL;
 
@@ -137,17 +135,9 @@ ips_tcp_session_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                         /* Statistics are tracked implicitly by session management */
                         /* Timeout is managed by session timer system */
 
-                        /* Step 5: Determine next node based on session state */
-                        if (session->tcp_state_src == IPS_SESSION_STATE_ESTABLISHED)
-                        {
-                            /* Established TCP session - send to TCP reordering node */
-                            next0 = IPS_TCP_SESSION_NEXT_TCP_REORDER;
-                        }
-                        else
-                        {
-                            /* Non-established session - forward normally */
-                            next0 = IPS_TCP_SESSION_NEXT_IP4_LOOKUP;
-                        }
+                        /* Step 5: Send all TCP sessions to ACL for processing */
+                        /* This ensures ACL filtering happens before expensive operations */
+                        next0 = IPS_TCP_SESSION_NEXT_TCP_ACL;
 
                         /* Store session information in buffer for next nodes */
                         vnet_buffer (b0)->unused[0] = session->session_index;
@@ -163,8 +153,8 @@ ips_tcp_session_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                 }
                 else
                 {
-                    /* Non-TCP packet - forward normally */
-                    next0 = IPS_TCP_SESSION_NEXT_IP4_LOOKUP;
+                    /* Non-TCP packet - drop (mirror traffic) */
+                    next0 = IPS_TCP_SESSION_NEXT_DROP;
                 }
             }
             else
@@ -184,17 +174,9 @@ ips_tcp_session_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                         /* Statistics are tracked implicitly by session management */
                         /* Timeout is managed by session timer system */
 
-                        /* Step 5: Determine next node based on session state */
-                        if (session->tcp_state_src == IPS_SESSION_STATE_ESTABLISHED)
-                        {
-                            /* Established TCP session - send to TCP reordering node */
-                            next0 = IPS_TCP_SESSION_NEXT_TCP_REORDER;
-                        }
-                        else
-                        {
-                            /* Non-established session - forward normally */
-                            next0 = IPS_TCP_SESSION_NEXT_IP6_LOOKUP;
-                        }
+                        /* Step 5: Send all TCP sessions to ACL for processing */
+                        /* This ensures ACL filtering happens before expensive operations */
+                        next0 = IPS_TCP_SESSION_NEXT_TCP_ACL;
 
                         /* Store session information in buffer for next nodes */
                         vnet_buffer (b0)->unused[0] = session->session_index;
@@ -210,8 +192,8 @@ ips_tcp_session_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                 }
                 else
                 {
-                    /* Non-TCP packet - forward normally */
-                    next0 = IPS_TCP_SESSION_NEXT_IP6_LOOKUP;
+                    /* Non-TCP packet - drop (mirror traffic) */
+                    next0 = IPS_TCP_SESSION_NEXT_DROP;
                 }
             }
 
@@ -267,9 +249,7 @@ VLIB_REGISTER_NODE (ips_tcp_session_node) = {
     .n_next_nodes = IPS_TCP_SESSION_N_NEXT,
     .next_nodes = {
         [IPS_TCP_SESSION_NEXT_DROP] = "error-drop",
-        [IPS_TCP_SESSION_NEXT_TCP_REORDER] = "ips-tcp-reorder",
-        [IPS_TCP_SESSION_NEXT_IP4_LOOKUP] = "ip4-lookup",
-        [IPS_TCP_SESSION_NEXT_IP6_LOOKUP] = "ip6-lookup",
+        [IPS_TCP_SESSION_NEXT_TCP_ACL] = "ips-tcp-acl",
     },
 };
 
@@ -285,9 +265,7 @@ VLIB_REGISTER_NODE (ips_tcp_session_ip6_node) = {
     .n_next_nodes = IPS_TCP_SESSION_N_NEXT,
     .next_nodes = {
         [IPS_TCP_SESSION_NEXT_DROP] = "error-drop",
-        [IPS_TCP_SESSION_NEXT_TCP_REORDER] = "ips-tcp-reorder",
-        [IPS_TCP_SESSION_NEXT_IP4_LOOKUP] = "ip4-lookup",
-        [IPS_TCP_SESSION_NEXT_IP6_LOOKUP] = "ip6-lookup",
+        [IPS_TCP_SESSION_NEXT_TCP_ACL] = "ips-tcp-acl",
     },
 };
 

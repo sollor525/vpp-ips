@@ -768,11 +768,11 @@ ips_tcp_reorder_get_stats (ips_flow_t *flow, u32 *buffered_src, u32 *buffered_ds
 {
     if (!flow)
     {
-        *buffered_src = 0;
-        *buffered_dst = 0;
+        if (buffered_src) *buffered_src = 0;
+        if (buffered_dst) *buffered_dst = 0;
         return;
     }
 
-    *buffered_src = flow->tcp_reorder_buffer_count_src;
-    *buffered_dst = flow->tcp_reorder_buffer_count_dst;
+    if (buffered_src) *buffered_src = flow->tcp_reorder_buffer_count_src;
+    if (buffered_dst) *buffered_dst = flow->tcp_reorder_buffer_count_dst;
 }

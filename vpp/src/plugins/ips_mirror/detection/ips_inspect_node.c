@@ -21,13 +21,11 @@ typedef struct
     u32 action;  /* 0=pass, 1=alert, 2=drop */
 } ips_inspect_trace_t;
 
-/* Next node indices */
+/* Next node indices - simplified for mirror traffic */
 typedef enum
 {
     IPS_INSPECT_NEXT_DROP,
     IPS_INSPECT_NEXT_BLOCK,      /* Send to block node for TCP reset */
-    IPS_INSPECT_NEXT_IP4_LOOKUP,
-    IPS_INSPECT_NEXT_IP6_LOOKUP,
     IPS_INSPECT_N_NEXT,
 } ips_inspect_next_t;
 
@@ -178,7 +176,7 @@ ips_inspect_node_fn (vlib_main_t *vm,
     {
         u32 bi0;
         vlib_buffer_t *b0;
-        u32 next0 = IPS_INSPECT_NEXT_IP4_LOOKUP;  /* Default: forward */
+        u32 next0 = IPS_INSPECT_NEXT_DROP;  /* Default: drop for mirror traffic */
         u8 is_ip6 = 0;
         
         bi0 = from[0];
@@ -246,14 +244,14 @@ ips_inspect_node_fn (vlib_main_t *vm,
             }
             else if (action == 1)  /* Alert */
             {
-                /* Generate alert but forward packet */
+                /* Generate alert but drop packet (mirror traffic) */
                 /* TODO: Add alert logging */
-                next0 = is_ip6 ? IPS_INSPECT_NEXT_IP6_LOOKUP : IPS_INSPECT_NEXT_IP4_LOOKUP;
+                next0 = IPS_INSPECT_NEXT_DROP;
                 stats->packets_alerted++;
             }
             else  /* Pass */
             {
-                next0 = is_ip6 ? IPS_INSPECT_NEXT_IP6_LOOKUP : IPS_INSPECT_NEXT_IP4_LOOKUP;
+                next0 = IPS_INSPECT_NEXT_DROP;  /* Drop for mirror traffic */
                 stats->packets_passed++;
             }
             
@@ -270,8 +268,8 @@ ips_inspect_node_fn (vlib_main_t *vm,
         }
         else
         {
-            /* No session - forward normally */
-            next0 = is_ip6 ? IPS_INSPECT_NEXT_IP6_LOOKUP : IPS_INSPECT_NEXT_IP4_LOOKUP;
+            /* No session - drop for mirror traffic */
+            next0 = IPS_INSPECT_NEXT_DROP;
         }
         
         /* Enqueue packet to next node */
@@ -309,8 +307,6 @@ VLIB_REGISTER_NODE (ips_inspect_node) = {
     .next_nodes = {
         [IPS_INSPECT_NEXT_DROP] = "error-drop",
         [IPS_INSPECT_NEXT_BLOCK] = "ips-block-node",
-        [IPS_INSPECT_NEXT_IP4_LOOKUP] = "ip4-lookup",
-        [IPS_INSPECT_NEXT_IP6_LOOKUP] = "ip6-lookup",
     },
 };
 

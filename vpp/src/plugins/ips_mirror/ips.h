@@ -28,8 +28,10 @@
 #include <vlibapi/api.h>
 #include <vlibmemory/api.h>
 
-/* Hyperscan includes - re-enabled with proper configuration */
+/* Hyperscan includes - conditionally compiled */
+#ifdef HAVE_HYPERSCAN
 #include <hs/hs.h>
+#endif
 
 /* IPS Logging Levels */
 typedef enum {

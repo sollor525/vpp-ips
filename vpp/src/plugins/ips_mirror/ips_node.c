@@ -36,15 +36,12 @@ typedef struct
     u32 rule_matches;
 } ips_trace_t;
 
-/* Packet processing next nodes */
+/* Packet processing next nodes - simplified for mirror traffic */
 typedef enum
 {
     IPS_INPUT_NEXT_DROP,
-    IPS_INPUT_NEXT_IP4_LOOKUP,
-    IPS_INPUT_NEXT_IP6_LOOKUP,
-    IPS_INPUT_NEXT_ETHERNET_INPUT,
     IPS_INPUT_NEXT_BLOCK,
-    IPS_INPUT_NEXT_TCP_SESSION,     /* New: send to TCP session node */
+    IPS_INPUT_NEXT_TCP_SESSION,     /* Send to TCP session node */
     IPS_INPUT_NEXT_PROTOCOL_DETECT,  /* Send to protocol detection node */
     IPS_INPUT_N_NEXT,
 } ips_input_next_t;
@@ -124,7 +121,7 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
         {
             u32 bi0;
             vlib_buffer_t *b0;
-            u32 next0 = IPS_INPUT_NEXT_IP4_LOOKUP;
+            u32 next0 = IPS_INPUT_NEXT_DROP;  /* Default: drop for mirror traffic */
             u32 sw_if_index0;
 
             /* Get packet */
@@ -149,8 +146,8 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                 }
                 else
                 {
-                    /* Non-TCP packet - forward normally */
-                    next0 = IPS_INPUT_NEXT_IP4_LOOKUP;
+                    /* Non-TCP packet - drop for mirror traffic */
+                    next0 = IPS_INPUT_NEXT_DROP;
                 }
             }
             else
@@ -163,8 +160,8 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                 }
                 else
                 {
-                    /* Non-TCP packet - forward normally */
-                    next0 = IPS_INPUT_NEXT_IP6_LOOKUP;
+                    /* Non-TCP packet - drop for mirror traffic */
+                    next0 = IPS_INPUT_NEXT_DROP;
                 }
             }
 
@@ -229,10 +226,8 @@ VLIB_REGISTER_NODE (ips_input_ip4_node) =
     .next_nodes =
     {
         [IPS_INPUT_NEXT_DROP] = "error-drop",
-        [IPS_INPUT_NEXT_IP4_LOOKUP] = "ip4-lookup",
-        [IPS_INPUT_NEXT_IP6_LOOKUP] = "ip6-lookup",
-        [IPS_INPUT_NEXT_ETHERNET_INPUT] = "ethernet-input",
         [IPS_INPUT_NEXT_BLOCK] = "ips-block-node",
+        [IPS_INPUT_NEXT_TCP_SESSION] = "ips-tcp-session",
         [IPS_INPUT_NEXT_PROTOCOL_DETECT] = "ips-protocol-detect",
     },
 };
@@ -250,26 +245,22 @@ VLIB_REGISTER_NODE (ips_input_ip6_node) =
     .next_nodes =
     {
         [IPS_INPUT_NEXT_DROP] = "error-drop",
-        [IPS_INPUT_NEXT_IP4_LOOKUP] = "ip4-lookup",
-        [IPS_INPUT_NEXT_IP6_LOOKUP] = "ip6-lookup",
-        [IPS_INPUT_NEXT_ETHERNET_INPUT] = "ethernet-input",
         [IPS_INPUT_NEXT_BLOCK] = "ips-block-node",
+        [IPS_INPUT_NEXT_TCP_SESSION] = "ips-tcp-session",
         [IPS_INPUT_NEXT_PROTOCOL_DETECT] = "ips-protocol-detect",
     },
 };
 
-/* Feature arc registration for IPv4 */
+/* Feature arc registration for IPv4 - simplified for mirror traffic */
 VNET_FEATURE_INIT (ips_ip4_input, static) =
 {
     .arc_name = "ip4-unicast",
     .node_name = "ips-input-ip4",
-    .runs_before = VNET_FEATURES ("ip4-lookup"),
 };
 
-/* Feature arc registration for IPv6 */
+/* Feature arc registration for IPv6 - simplified for mirror traffic */
 VNET_FEATURE_INIT (ips_ip6_input, static) =
 {
     .arc_name = "ip6-unicast",
     .node_name = "ips-input-ip6",
-    .runs_before = VNET_FEATURES ("ip6-lookup"),
 };
