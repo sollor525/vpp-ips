@@ -3,7 +3,7 @@
 ##############################################################################
 
 # Set Hyperscan paths first
-set(HYPERSCAN_ROOT "/root/workspace/IPS/3rd-dep/hyperscan/hyperscan")
+set(HYPERSCAN_ROOT "../../../../3rd-dep/hyperscan/hyperscan")
 set(HYPERSCAN_INCLUDE_DIR "${HYPERSCAN_ROOT}/build")
 set(HYPERSCAN_LIB_DIR "${HYPERSCAN_ROOT}/build/lib")
 

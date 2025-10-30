@@ -1,1 +1,1 @@
-/root/workspace/IPS/vpp/build-root/build-vpp_debug-native/vpp/CMakeFiles/plugins/ips_mirror/ips.api_enum.h
+/root/workspace/vpp-ips/vpp/build-root/build-vpp_debug-native/vpp/CMakeFiles/plugins/ips_mirror/ips.api_enum.h
