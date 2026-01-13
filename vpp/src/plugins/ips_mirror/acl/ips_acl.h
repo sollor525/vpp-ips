@@ -50,6 +50,7 @@ typedef struct
     u32 rule_id;                       /* Rule ID */
     u32 vpp_acl_index;                 /* VPP ACL index */
     u32 vpp_rule_index;                /* VPP rule index within ACL */
+    u32 batch_group_id;                /* Batch group ID (~0 for none) */
     u8 is_ipv6;                        /* IPv6 flag */
     ip46_address_t src_ip;             /* Source IP */
     u8 src_prefixlen;                  /* Source prefix length */
@@ -147,6 +148,52 @@ typedef struct
     u64 synack_packets_blocked;        /* SYN-ACK packets blocked */
 } ips_acl_stats_t;
 
+/*
+ * ========================================================================
+ * Batch ACL Group Structures - Unified Batch Mode Support
+ * ========================================================================
+ */
+
+/**
+ * @brief Batch ACL Group - manages multiple rules sharing one VPP ACL
+ *
+ * Design philosophy: "Single rule IS batch, batch IS single rule"
+ * - All rules are stored in batch groups
+ * - Single rule mode: group with 1 rule
+ * - Batch mode: group with multiple rules
+ * - Unified data structure and management
+ */
+typedef struct
+{
+    u32 group_id;                      /* Unique group ID */
+    u32 vpp_acl_index;                 /* VPP ACL index */
+    u32 rule_count;                    /* Number of rules in group */
+    ips_acl_rule_t **rules;            /* Vector of rule pointers */
+    u32 *rule_index_map;               /* VPP rule index -> IPS rule ID mapping */
+
+    /* Group state */
+    u8 is_enabled;                     /* Group enabled flag */
+    u64 total_hits;                    /* Total group hit count */
+    f64 create_time;                   /* Creation timestamp */
+    f64 last_update_time;              /* Last update timestamp */
+} ips_acl_batch_group_t;
+
+/**
+ * @brief Batch ACL Manager - manages all batch groups
+ */
+typedef struct
+{
+    ips_acl_batch_group_t *groups;     /* Pool of batch groups */
+    u32 next_group_id;                 /* Next group ID to assign */
+    u32 num_groups;                    /* Number of active groups */
+
+    /* Reverse mapping: VPP ACL index -> Batch group ID
+     * Dynamic array where index = vpp_acl_index
+     * Value ~0 means not a batch ACL
+     */
+    u32 *vpp_acl_to_group_map;
+} ips_acl_batch_manager_t;
+
 /* IPS ACL Manager - Extended */
 typedef struct
 {
@@ -177,6 +224,9 @@ typedef struct
     u8 reset_enabled;                  /* Reset functionality enabled */
     u8 log_denied;                     /* Log denied packets */
     u8 default_action;                /* Default action when no rule matches (0=PASS, 1=BLOCK) */
+
+    /* Batch mode manager - unified batch/single rule management */
+    ips_acl_batch_manager_t batch_manager;
 } ips_acl_manager_t;
 
 /* Global instance */
@@ -334,5 +384,46 @@ void ips_acl_process_batch(vlib_main_t *vm,
  * @return rule ID on success, ~0 on error
  */
 u32 ips_acl_add_session_rule(ips_acl_rule_t *rule);
+
+/* Batch rule operations for large-scale ACL support */
+
+/**
+ * @brief Add multiple IPS ACL rules in a single VPP ACL with metadata storage
+ * @param rules Array of rule structures
+ * @param count Number of rules in the array
+ * @param acl_index Output: VPP ACL index created (optional, can be NULL)
+ * @param group_id Output: Batch group ID created (optional, can be NULL)
+ * @return 0 on success, -1 on error
+ *
+ * This function creates a batch group containing all rules, creates a single
+ * VPP ACL for all rules, and stores metadata for each rule to enable
+ * single-rule level operations (statistics, enable/disable, etc.)
+ */
+int ips_acl_add_rules_batch(ips_acl_rule_t *rules, u32 count, u32 *acl_index, u32 *group_id);
+
+/**
+ * @brief Load ACL rules from a file
+ * @param filename Path to the rules file
+ * @param acl_index Output: VPP ACL index created
+ * @param rules_loaded Output: Number of rules loaded
+ * @return 0 on success, -1 on error
+ *
+ * File format (one rule per line):
+ * permit|deny src <IP/prefixlen> dst <IP/prefixlen> [proto <proto>] [sport <port>] [dport <port>]
+ *
+ * Example:
+ * deny src 192.168.1.0/24 dst 10.0.0.0/8 proto tcp dport 80
+ * permit src 0.0.0.0/0 dst 0.0.0.0/0
+ */
+int ips_acl_load_rules_from_file(const char *filename, u32 *acl_index, u32 *rules_loaded);
+
+/**
+ * @brief Create a single VPP ACL from IPS rules
+ * @param ips_rules Array of IPS ACL rules
+ * @param count Number of rules
+ * @param acl_index Output: VPP ACL index
+ * @return 0 on success, -1 on error
+ */
+int ips_acl_create_vpp_acl_batch(ips_acl_rule_t *ips_rules, u32 count, u32 *acl_index);
 
 #endif /* __IPS_ACL_H__ */

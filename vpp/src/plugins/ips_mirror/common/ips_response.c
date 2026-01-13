@@ -245,6 +245,10 @@ ips_send_reject_response (ips_flow_t *flow, vlib_buffer_t *b)
 
     tcp0 = (tcp_header_t *) ((u8 *) eth0 + tcp_offset);
 
+    /* Mark as intentionally unused - may be used for future features */
+    (void)ip0;
+    (void)ip6_0;
+
     /* Allocate new buffer for RST response */
     u32 bi;
     vlib_buffer_t *rst_b;

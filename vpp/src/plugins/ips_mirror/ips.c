@@ -60,6 +60,16 @@ ips_init (vlib_main_t *vm)
   vec_validate_aligned (im->per_thread_data, vlib_num_workers (),
 			CLIB_CACHE_LINE_BYTES);
 
+  /* Initialize simple counters for vlib_increment_simple_counter */
+  u32 num_threads = vlib_num_workers () + 1;  /* Include main thread */
+  vec_validate_aligned (im->counters, num_threads,
+                       CLIB_CACHE_LINE_BYTES);
+  for (u32 i = 0; i < num_threads; i++)
+  {
+    vec_validate_aligned (im->counters[i].counters, IPS_COUNTER_MAX,
+                         CLIB_CACHE_LINE_BYTES);
+  }
+
   /* Initialize rule storage */
   im->rules = 0;
   im->rule_index_by_id = hash_create (0, sizeof (uword));

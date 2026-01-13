@@ -26,6 +26,7 @@
 #include <vppinfra/error.h>
 
 #include "ips_block.h"
+#include "../ips.h"
 
 /* Blocking packet processing next nodes - simplified for mirror traffic */
 typedef enum
@@ -36,8 +37,7 @@ typedef enum
 
 
 
-/* Per-thread blocking node statistics */
-static ips_block_node_stats_t *block_node_stats;
+/* Note: Statistics now use VPP's unified counter system via ips_main.counters */
 
 /**
  * @brief Main blocking node function - simplified version
@@ -57,6 +57,21 @@ ips_block_node_fn (vlib_main_t * vm,
         u32 bi0 = from[0];
         vlib_buffer_t *b0 = vlib_get_buffer (vm, bi0);
         u32 sw_if_index = vnet_buffer(b0)->sw_if_index[VLIB_RX];
+        u32 thread_index = vm->thread_index;
+
+        /* Increment basic packet counters */
+        vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_PACKETS_RECEIVED],
+                                      thread_index,
+                                      0, /* counter index - always 0 for simple counter */
+                                      1);
+        vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_BYTES_RECEIVED],
+                                      thread_index,
+                                      0, /* counter index - always 0 for simple counter */
+                                      b0->current_length);
+        vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_BLOCKS_SENT],
+                                      thread_index,
+                                      0, /* counter index - always 0 for simple counter */
+                                      1);
 
         /* Get packet headers - buffer current pointer is at IP header (not Ethernet) */
         ip4_header_t *ip4h = NULL;
@@ -119,26 +134,33 @@ ips_block_node_fn (vlib_main_t * vm,
              * - Source MAC: will be automatically set to TX interface's MAC
              * - Dest MAC: original packet's source MAC
              */
-            if (ips_block_send_tcp_reset(vm->thread_index, tx_sw_if_index,
+            if (ips_block_send_tcp_reset(thread_index, tx_sw_if_index,
                                         NULL, dst_mac,  /* src_mac is ignored, dst_mac from original */
                                         NULL, ip4h, ip6h, tcph,
                                         0, /* is_reply */
                                         IPS_BLOCK_REASON_ACL) == 0)
             {
-                block_node_stats[vm->thread_index].tcp_resets_sent++;
+                vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_TCP_RESETS_SENT],
+                                              thread_index,
+                                              0, /* counter index - always 0 for simple counter */
+                                              1);
             }
             else
             {
-                block_node_stats[vm->thread_index].failed_blocks++;
+                vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_BLOCK_ERRORS],
+                                              thread_index,
+                                              0, /* counter index - always 0 for simple counter */
+                                              1);
             }
         }
         else
         {
             /* Not a TCP packet, just drop */
-            block_node_stats[vm->thread_index].silent_drops++;
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_NON_TCP_DROPPED],
+                                          thread_index,
+                                          0, /* counter index - always 0 for simple counter */
+                                          1);
         }
-
-        block_node_stats[vm->thread_index].packets_processed++;
 
         /* Always drop the original packet after processing */
         vlib_buffer_free (vm, &bi0, 1);
@@ -150,20 +172,6 @@ ips_block_node_fn (vlib_main_t * vm,
     return frame->n_vectors;
 }
 
-/**
- * @brief Initialize blocking node
- */
-static clib_error_t *
-ips_block_node_init (vlib_main_t * vm)
-{
-    /* Initialize per-thread statistics */
-    u32 num_threads = vlib_num_workers () + 1;
-    vec_validate (block_node_stats, num_threads - 1);
-    clib_memset (block_node_stats, 0, sizeof (ips_block_node_stats_t) * num_threads);
-
-    return 0;
-}
-
 VLIB_REGISTER_NODE (ips_block_node) = {
     .function = ips_block_node_fn,
     .name = "ips-block-node",
@@ -173,33 +181,14 @@ VLIB_REGISTER_NODE (ips_block_node) = {
     .next_nodes = {
         [IPS_BLOCK_NEXT_DROP] = "error-drop",
     },
+    
 };
 
-VLIB_INIT_FUNCTION (ips_block_node_init);
-
-/**
- * @brief Get blocking node statistics
+/*
+ * Note: Statistics functions removed - now using VPP's unified counter system
+ * Use vlib_get_simple_counter(&ips_main.counters[thread_index], counter_index)
+ * to access specific counter values
  */
-void
-ips_block_node_get_stats (u32 thread_index, ips_block_node_stats_t *stats)
-{
-    if (thread_index >= vec_len (block_node_stats) || !stats)
-        return;
-
-    *stats = block_node_stats[thread_index];
-}
-
-/**
- * @brief Reset blocking node statistics
- */
-void
-ips_block_node_reset_stats (u32 thread_index)
-{
-    if (thread_index >= vec_len (block_node_stats))
-        return;
-
-    clib_memset (&block_node_stats[thread_index], 0, sizeof (ips_block_node_stats_t));
-}
 
 /*
  * fd.io coding-style-patch-verification: ON

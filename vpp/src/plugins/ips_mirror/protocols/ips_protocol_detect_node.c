@@ -125,6 +125,13 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
     u32 n_left_from, *from;
     u32 thread_index = vm->thread_index;
 
+    /* Local counters for the entire frame */
+    u32 detection_attempts_count = 0;
+    u32 detection_success_count = 0;
+    u32 insufficient_data_count = 0;
+    u32 no_payload_count = 0;
+    u32 sessions_not_found_count = 0;
+
     from = vlib_frame_vector_args (frame);
     n_left_from = frame->n_vectors;
 
@@ -136,7 +143,10 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
         
         bi0 = from[0];
         b0 = vlib_get_buffer (vm, bi0);
-        
+
+        /* Counters will be incremented after processing the entire frame */
+        detection_attempts_count++;
+
         /* Get packet headers - buffer is at IP header */
         u8 *ip_start = vlib_buffer_get_current (b0);
         ip4_header_t *ip4h = NULL;
@@ -144,8 +154,7 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
         tcp_header_t *tcph = NULL;
         u8 *payload = NULL;
         u32 payload_len = 0;
-        u8 is_ip6 = 0;
-        
+
         /* Determine IP version and get headers */
         if (b0->current_length >= sizeof(ip4_header_t))
         {
@@ -153,7 +162,6 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
             
             if ((ip4h->ip_version_and_header_length & 0xF0) == 0x40)  /* IPv4 */
             {
-                is_ip6 = 0;
                 if (ip4h->protocol == IP_PROTOCOL_TCP &&
                     b0->current_length >= sizeof(ip4_header_t) + sizeof(tcp_header_t))
                 {
@@ -166,8 +174,7 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
             {
                 ip6h = (ip6_header_t *)ip4h;
                 ip4h = NULL;
-                is_ip6 = 1;
-                
+
                 if (ip6h->protocol == IP_PROTOCOL_TCP &&
                     b0->current_length >= sizeof(ip6_header_t) + sizeof(tcp_header_t))
                 {
@@ -197,22 +204,34 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
         
         if (session && tcph && payload && payload_len > 0)
         {
+            /* Protocol detection attempt already counted above */
+
             /* Detect application protocol */
             u8 direction = (tcph->flags & TCP_FLAG_SYN) ? 0 : 1;  /* Rough estimate */
             ips_alproto_t proto = ips_detect_protocol(session, b0, IP_PROTOCOL_TCP,
                                                      payload, payload_len, direction);
-            
+
             /* If protocol detected or has enough data, send to IPS inspect node */
             if (proto != IPS_ALPROTO_UNKNOWN || payload_len >= 100)
             {
                 /* Send to IPS rule matching node */
                 next0 = IPS_PROTO_NEXT_IPS_INSPECT;
+
+                /* Increment successful detection counter */
+                detection_success_count++;
+
+                if (proto != IPS_ALPROTO_UNKNOWN) {
+                    /* Protocol-specific counters will be handled below based on proto value */
+                }
             }
             else
             {
                 /* Protocol not yet detected, drop for mirror traffic */
                 /* Continue detection on next packets */
                 next0 = IPS_PROTO_NEXT_DROP;
+
+                /* Increment insufficient data counter */
+                insufficient_data_count++;
             }
             
             /* Add trace if enabled */
@@ -230,6 +249,15 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
         {
             /* No session or no payload - drop for mirror traffic */
             next0 = IPS_PROTO_NEXT_DROP;
+
+            /* Increment appropriate failure counters */
+            if (!session) {
+                sessions_not_found_count++;
+            } else if (!tcph) {
+                /* Non-TCP packets are not counted in protocol detection */
+            } else if (!payload || payload_len == 0) {
+                no_payload_count++;
+            }
         }
         
         /* Enqueue packet to next node */
@@ -237,6 +265,48 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
         
         from += 1;
         n_left_from -= 1;
+    }
+
+    /* Increment counters for the entire frame */
+    if (frame->n_vectors > 0) {
+        vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_PACKETS_RECEIVED], thread_index, 0,
+                                      frame->n_vectors);
+
+        /* Calculate total bytes - use original frame pointer */
+        u32 *original_from = vlib_frame_vector_args (frame);
+        if (frame->n_vectors > 0) {
+            u32 first_bi = original_from[0];
+            vlib_buffer_t *first_b = vlib_get_buffer(vm, first_bi);
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_BYTES_RECEIVED], thread_index, 0,
+                                          first_b->current_length * frame->n_vectors);
+        }
+
+        vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_PROTOCOL_DETECTION_PROCESSED], thread_index, 0,
+                                      frame->n_vectors);
+
+        /* Increment protocol detection specific counters */
+        if (detection_attempts_count > 0) {
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_PROTOCOL_DETECTION_ATTEMPTS], thread_index, 0,
+                                          detection_attempts_count);
+        }
+        if (detection_success_count > 0) {
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_PROTOCOL_DETECTION_SUCCESS], thread_index, 0,
+                                          detection_success_count);
+        }
+        if (insufficient_data_count > 0) {
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_PROTOCOL_INSUFFICIENT_DATA], thread_index, 0,
+                                          insufficient_data_count);
+        }
+        if (sessions_not_found_count > 0) {
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_SESSION_NOT_FOUND], thread_index, 0,
+                                          sessions_not_found_count);
+        }
+        if (no_payload_count > 0) {
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_PROTOCOL_NO_PAYLOAD], thread_index, 0,
+                                          no_payload_count);
+        }
+
+        /* Note: Protocol-specific counters (HTTP, HTTPS, etc.) would be handled in protocol detection logic */
     }
 
     return frame->n_vectors;
@@ -248,12 +318,13 @@ VLIB_REGISTER_NODE (ips_protocol_detect_node) = {
     .vector_size = sizeof (u32),
     .format_trace = format_ips_proto_detect_trace,
     .type = VLIB_NODE_TYPE_INTERNAL,
-    
+
     .n_next_nodes = IPS_PROTO_N_NEXT,
     .next_nodes = {
         [IPS_PROTO_NEXT_DROP] = "error-drop",
         [IPS_PROTO_NEXT_IPS_INSPECT] = "ips-inspect",
         [IPS_PROTO_NEXT_BLOCK] = "ips-block-node",
     },
+    
 };
 

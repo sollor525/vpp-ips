@@ -132,6 +132,10 @@ ips_tcp_acl_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
             src_port = vnet_buffer (b0)->unused[1];
             dst_port = vnet_buffer (b0)->unused[2];
 
+            /* Get session manager data for direct pool access */
+            ips_session_manager_t *sm = &ips_session_manager;
+            ips_session_per_thread_data_t *ptd = &sm->per_thread_data[thread_index];
+
             /* Look up session using IP and port information */
             if (!is_ip6)
             {
@@ -140,17 +144,35 @@ ips_tcp_acl_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                 {
                     tcp_header_t *tcph = ip4_next_header (ip4h);
 
-                    /* Create session key for lookup */
-                    ips_session_key4_t key = {
-                        .src_ip = ip4h->src_address,
-                        .dst_ip = ip4h->dst_address,
-                        .src_port = src_port,
-                        .dst_port = dst_port,
-                        .protocol = IP_PROTOCOL_TCP
-                    };
+                    /* Try direct pool access first (performance optimization) */
+                    session = NULL;
+                    if (PREDICT_TRUE(session_index < pool_len(ptd->session_pool) &&
+                                     !pool_is_free_index(ptd->session_pool, session_index)))
+                    {
+                        session = pool_elt_at_index(ptd->session_pool, session_index);
 
-                    /* Find session by key */
-                    session = ips_session_lookup_ipv4(thread_index, &key);
+                        /* Validate session matches */
+                        if (PREDICT_FALSE(session->session_index != session_index ||
+                                           session->thread_index != thread_index))
+                        {
+                            session = NULL; /* Session reused or invalid - fallback to hash lookup */
+                        }
+                    }
+
+                    /* Fallback to hash lookup if direct access failed */
+                    if (PREDICT_FALSE(session == NULL))
+                    {
+                        /* Create session key for hash lookup */
+                        ips_session_key4_t key = {
+                            .src_ip = ip4h->src_address,
+                            .dst_ip = ip4h->dst_address,
+                            .src_port = src_port,
+                            .dst_port = dst_port,
+                            .protocol = IP_PROTOCOL_TCP
+                        };
+
+                        session = ips_session_lookup_ipv4(thread_index, &key);
+                    }
 
                     if (PREDICT_TRUE (session != NULL))
                     {
@@ -230,17 +252,35 @@ ips_tcp_acl_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                 {
                     tcp_header_t *tcph = ip6_next_header (ip6h);
 
-                    /* Create session key for lookup */
-                    ips_session_key6_t key = {
-                        .src_ip = ip6h->src_address,
-                        .dst_ip = ip6h->dst_address,
-                        .src_port = src_port,
-                        .dst_port = dst_port,
-                        .protocol = IP_PROTOCOL_TCP
-                    };
+                    /* Try direct pool access first (performance optimization) */
+                    session = NULL;
+                    if (PREDICT_TRUE(session_index < pool_len(ptd->session_pool) &&
+                                     !pool_is_free_index(ptd->session_pool, session_index)))
+                    {
+                        session = pool_elt_at_index(ptd->session_pool, session_index);
 
-                    /* Find session by key */
-                    session = ips_session_lookup_ipv6(thread_index, &key);
+                        /* Validate session matches */
+                        if (PREDICT_FALSE(session->session_index != session_index ||
+                                           session->thread_index != thread_index))
+                        {
+                            session = NULL; /* Session reused or invalid - fallback to hash lookup */
+                        }
+                    }
+
+                    /* Fallback to hash lookup if direct access failed */
+                    if (PREDICT_FALSE(session == NULL))
+                    {
+                        /* Create session key for hash lookup */
+                        ips_session_key6_t key = {
+                            .src_ip = ip6h->src_address,
+                            .dst_ip = ip6h->dst_address,
+                            .src_port = src_port,
+                            .dst_port = dst_port,
+                            .protocol = IP_PROTOCOL_TCP
+                        };
+
+                        session = ips_session_lookup_ipv6(thread_index, &key);
+                    }
 
                     if (PREDICT_TRUE (session != NULL))
                     {

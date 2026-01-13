@@ -462,6 +462,14 @@ ips_log_flush_single_buffer (ips_log_buffer_t *buffer)
             ips_log_write_system_msg (entry.data.system_msg, entry.level,
                                     vlib_time_now (vlib_get_main ()));
             break;
+
+        case IPS_LOG_ENTRY_ACL_HIT:
+            ips_log_write_acl_hit (&entry.data.acl_hit);
+            break;
+
+        case IPS_LOG_ENTRY_IDS_MATCH:
+            ips_log_write_ids_match (&entry.data.ids_match);
+            break;
         }
     }
 }
@@ -498,6 +506,16 @@ ips_log_flush_buffers (void)
             case IPS_LOG_ENTRY_SYSTEM:
                 ips_log_write_system_msg (entry.data.system_msg, entry.level,
                                         vlib_time_now (vlib_get_main ()));
+                break;
+
+            case IPS_LOG_ENTRY_ACL_HIT:
+                ips_log_write_acl_hit (&entry.data.acl_hit);
+                break;
+
+            case IPS_LOG_ENTRY_IDS_MATCH:
+                ips_log_write_ids_match (&entry.data.ids_match);
+                if (entry.level >= IPS_LOG_LEVEL_WARNING)
+                    cfg->alert_entries++;
                 break;
             }
         }
@@ -699,7 +717,7 @@ ips_log_flush_command (vlib_main_t *vm, unformat_input_t *input, vlib_cli_comman
 
 VLIB_CLI_COMMAND (ips_log_flush_cmd, static) = {
     .path = "ips log flush",
-    .short_help = "Manually flush IPS log buffers",
+    .short_help = "ips log flush",
     .function = ips_log_flush_command,
 };
 
@@ -801,6 +819,237 @@ ips_log_sync_command (vlib_main_t *vm, unformat_input_t *input, vlib_cli_command
     }
 
     return 0;
+}
+
+/*
+ * NEW ACL and IDS Logging Implementation
+ */
+
+/* ips_extract_five_tuple function moved to header file as inline function */
+
+/**
+ * @brief FAST PATH: Log ACL hit asynchronously
+ * This function is safe to call from the data plane
+ */
+void
+ips_log_acl_hit_async (u32 session_id, const ips_log_five_tuple_t *five_tuple,
+                      u32 acl_rule_id, const char *action, const char *reason,
+                      u8 tcp_flags, u32 tcp_state, u8 vpp_acl_hit,
+                      u32 packet_len, f64 timestamp, u32 thread_index)
+{
+    ips_logging_config_t *cfg = &ips_logging_config;
+    ips_log_entry_t entry;
+    ips_log_buffer_t *buffer;
+
+    if (PREDICT_FALSE (thread_index >= cfg->num_threads))
+        return;
+
+    buffer = &cfg->per_thread_buffers[thread_index];
+
+    /* Prepare log entry */
+    clib_memset (&entry, 0, sizeof (entry));
+    entry.type = IPS_LOG_ENTRY_ACL_HIT;
+    entry.level = IPS_LOG_LEVEL_INFO;  /* ACL hits are informational */
+
+    /* Fill ACL hit data */
+    entry.data.acl_hit.timestamp = timestamp;
+    entry.data.acl_hit.session_id = session_id;
+    entry.data.acl_hit.acl_rule_id = acl_rule_id;
+    entry.data.acl_hit.tcp_flags = tcp_flags;
+    entry.data.acl_hit.tcp_state = tcp_state;
+    entry.data.acl_hit.vpp_acl_hit = vpp_acl_hit;
+    entry.data.acl_hit.packet_len = packet_len;
+
+    /* Copy five-tuple information */
+    if (five_tuple)
+    {
+        clib_memcpy (&entry.data.acl_hit.five_tuple, five_tuple, sizeof (*five_tuple));
+    }
+
+    /* Copy strings with bounds checking */
+    strncpy (entry.data.acl_hit.action, action ? action : "UNKNOWN",
+             IPS_LOG_MAX_ACTION_SIZE - 1);
+    strncpy (entry.data.acl_hit.reason, reason ? reason : "No reason provided",
+             IPS_LOG_MAX_REASON_SIZE - 1);
+
+    /* Update statistics */
+    cfg->total_entries++;
+    /* Note: ptd reference needs to be passed in or fetched from global context */
+
+    /* Add to buffer or write immediately */
+    if (PREDICT_FALSE (cfg->sync_mode))
+    {
+        ips_log_write_acl_hit (&entry.data.acl_hit);
+    }
+    else
+    {
+        if (ips_log_buffer_add_entry (buffer, &entry) != 0)
+        {
+            buffer->dropped++;
+            /* Note: ptd reference needs to be passed in or fetched from global context */
+        }
+    }
+}
+
+/**
+ * @brief FAST PATH: Log IDS match asynchronously
+ * This function is safe to call from the data plane
+ */
+void
+ips_log_ids_match_async (u32 session_id, const ips_log_five_tuple_t *five_tuple,
+                        u32 rule_id, u32 sid, u32 gid, u32 priority,
+                        const char *action, const char *msg,
+                        const char *classification, const char *rule_id_str,
+                        u32 packet_len, u32 match_offset, u32 pattern_len,
+                        u8 app_proto, f64 detection_time_us, f64 timestamp,
+                        u32 thread_index)
+{
+    ips_logging_config_t *cfg = &ips_logging_config;
+    ips_log_entry_t entry;
+    ips_log_buffer_t *buffer;
+
+    if (PREDICT_FALSE (thread_index >= cfg->num_threads))
+        return;
+
+    buffer = &cfg->per_thread_buffers[thread_index];
+
+    /* Prepare log entry */
+    clib_memset (&entry, 0, sizeof (entry));
+    entry.type = IPS_LOG_ENTRY_IDS_MATCH;
+    entry.level = IPS_LOG_LEVEL_WARNING;  /* IDS matches are warnings/alerts */
+
+    /* Fill IDS match data */
+    entry.data.ids_match.timestamp = timestamp;
+    entry.data.ids_match.session_id = session_id;
+    entry.data.ids_match.rule_id = rule_id;
+    entry.data.ids_match.sid = sid;
+    entry.data.ids_match.gid = gid;
+    entry.data.ids_match.priority = priority;
+    entry.data.ids_match.packet_len = packet_len;
+    entry.data.ids_match.match_offset = match_offset;
+    entry.data.ids_match.pattern_len = pattern_len;
+    entry.data.ids_match.app_proto = app_proto;
+    entry.data.ids_match.detection_time_us = detection_time_us;
+
+    /* Copy five-tuple information */
+    if (five_tuple)
+    {
+        clib_memcpy (&entry.data.ids_match.five_tuple, five_tuple, sizeof (*five_tuple));
+    }
+
+    /* Copy strings with bounds checking */
+    strncpy (entry.data.ids_match.action, action ? action : "UNKNOWN",
+             IPS_LOG_MAX_ACTION_SIZE - 1);
+    strncpy (entry.data.ids_match.msg, msg ? msg : "No message",
+             IPS_LOG_MAX_MSG_SIZE - 1);
+    strncpy (entry.data.ids_match.classification,
+             classification ? classification : "Unknown",
+             IPS_LOG_MAX_CLASSIFICATION_SIZE - 1);
+    strncpy (entry.data.ids_match.rule_id_str, rule_id_str ? rule_id_str : "unknown",
+             IPS_LOG_MAX_RULE_ID_SIZE - 1);
+
+    /* Update statistics */
+    cfg->total_entries++;
+    cfg->alert_entries++;
+    /* Note: ptd reference needs to be passed in or fetched from global context */
+
+    /* Add to buffer or write immediately */
+    if (PREDICT_FALSE (cfg->sync_mode))
+    {
+        ips_log_write_ids_match (&entry.data.ids_match);
+    }
+    else
+    {
+        if (ips_log_buffer_add_entry (buffer, &entry) != 0)
+        {
+            buffer->dropped++;
+            /* Note: ptd reference needs to be passed in or fetched from global context */
+        }
+    }
+}
+
+/**
+ * @brief Write ACL hit entry to file
+ */
+void
+ips_log_write_acl_hit (ips_log_acl_hit_entry_t *entry)
+{
+    ips_logging_config_t *cfg = &ips_logging_config;
+    FILE *fp;
+    char *acl_filename;
+
+    /* Construct ACL log filename */
+    acl_filename = (char *) clib_mem_alloc (strlen (cfg->log_dir) + 16);
+    snprintf (acl_filename, strlen (cfg->log_dir) + 16, "%s/acl.log", cfg->log_dir);
+
+    /* Open file for append */
+    if (ips_log_file_open (acl_filename, &fp) != 0)
+    {
+        clib_mem_free (acl_filename);
+        return;
+    }
+
+    /* Write ACL hit entry in structured format */
+    fprintf (fp, "%.6f ACL_HIT session=%u src=%s:%u dst=%s:%u proto=%u "
+                "rule_id=%u action=%s reason=\"%s\" tcp_flags=0x%02x "
+                "tcp_state=%u vpp_acl=%s packet_len=%u\n",
+            entry->timestamp,
+            entry->session_id,
+            entry->five_tuple.src_ip_str, entry->five_tuple.src_port,
+            entry->five_tuple.dst_ip_str, entry->five_tuple.dst_port,
+            entry->five_tuple.protocol,
+            entry->acl_rule_id,
+            entry->action,
+            entry->reason,
+            entry->tcp_flags,
+            entry->tcp_state,
+            entry->vpp_acl_hit ? "yes" : "no",
+            entry->packet_len);
+
+    ips_log_file_close (&fp);
+    clib_mem_free (acl_filename);
+}
+
+/**
+ * @brief Write IDS match entry to file
+ */
+void
+ips_log_write_ids_match (ips_log_ids_match_entry_t *entry)
+{
+    ips_logging_config_t *cfg = &ips_logging_config;
+    FILE *fp;
+
+    /* Open alert file for append */
+    if (ips_log_file_open (cfg->alert_file, &fp) != 0)
+    {
+        return;
+    }
+
+    /* Write IDS match entry in structured format */
+    fprintf (fp, "%.6f IDS_MATCH session=%u src=%s:%u dst=%s:%u proto=%u "
+                "rule_id=%s sid=%u gid=%u priority=%u action=%s "
+                "msg=\"%s\" classification=\"%s\" packet_len=%u "
+                "match_offset=%u pattern_len=%u app_proto=%u "
+                "detection_time_us=%.2f\n",
+            entry->timestamp,
+            entry->session_id,
+            entry->five_tuple.src_ip_str, entry->five_tuple.src_port,
+            entry->five_tuple.dst_ip_str, entry->five_tuple.dst_port,
+            entry->five_tuple.protocol,
+            entry->rule_id_str,
+            entry->sid,
+            entry->gid,
+            entry->priority,
+            entry->action,
+            entry->msg,
+            entry->classification,
+            entry->packet_len,
+            entry->match_offset,
+            entry->pattern_len,
+            entry->app_proto,
+            entry->detection_time_us);
+
+    ips_log_file_close (&fp);
 }
 
 VLIB_CLI_COMMAND (ips_log_sync_cmd, static) = {

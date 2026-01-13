@@ -435,7 +435,7 @@ ips_find_candidate_rules(ips_packet_context_t *ctx, u32 *count)
      */
 
     /* If we have TCP/UDP packets, also filter by ports */
-    if (ctx->protocol == IP_PROTOCOL_TCP || ctx->protocol == IP_PROTOCOL_UDP)
+    if (ctx->protocol == IPS_PROTO_TCP || ctx->protocol == IPS_PROTO_UDP)
     {
         /* Port-based filtering could be implemented here */
         /* For now, just use protocol filtering */

@@ -639,3 +639,329 @@ VLIB_CLI_COMMAND(ips_acl_test_block_command, static) = {
     .short_help = "ips acl test block src <IP> dst-port <port>",
     .function = ips_acl_test_block_command_fn,
 };
+
+/*
+ * ========================================================================
+ * Batch ACL Rule Import Commands for Large-Scale Rule Support
+ * ========================================================================
+ */
+
+/**
+ * @brief CLI command to load ACL rules from a file
+ */
+static clib_error_t *
+ips_acl_load_from_file_command_fn(vlib_main_t *vm,
+                                  unformat_input_t *input,
+                                  vlib_cli_command_t *cmd)
+{
+    (void)cmd;
+    char *filename = NULL;
+    u32 acl_index;
+    u32 rules_loaded;
+
+    while (unformat_check_input(input) != UNFORMAT_END_OF_INPUT)
+    {
+        if (unformat(input, "%s", &filename))
+            ;
+        else
+            return clib_error_return(0, "unknown input `%U'", format_unformat_error, input);
+    }
+
+    if (!filename)
+        return clib_error_return(0, "Filename must be specified");
+
+    /* Load rules from file */
+    if (ips_acl_load_rules_from_file(filename, &acl_index, &rules_loaded) != 0)
+    {
+        return clib_error_return(0, "Failed to load ACL rules from file: %s", filename);
+    }
+
+    vlib_cli_output(vm, "Successfully loaded %u ACL rules from file '%s'", rules_loaded, filename);
+    vlib_cli_output(vm, "VPP ACL index: %u", acl_index);
+
+    /* Free filename */
+    vec_free(filename);
+
+    return 0;
+}
+
+VLIB_CLI_COMMAND(ips_acl_load_from_file_command, static) = {
+    .path = "ips acl load from file",
+    .short_help = "ips acl load from file <filename>\n"
+                  "  Load ACL rules from a text file (one rule per line)\n"
+                  "  Format: permit|deny src IP/prefix dst IP/prefix [proto X] [sport X] [dport X]\n"
+                  "  Example:\n"
+                  "    deny src 192.168.1.0/24 dst 10.0.0.0/8 proto tcp dport 80\n"
+                  "    permit src 0.0.0.0/0 dst 0.0.0.0/0\n"
+                  "  Supports up to 10000+ rules per file",
+    .function = ips_acl_load_from_file_command_fn,
+};
+
+/**
+ * @brief CLI command to create a sample ACL rules file for testing
+ */
+static clib_error_t *
+ips_acl_create_sample_file_command_fn(vlib_main_t *vm,
+                                     unformat_input_t *input,
+                                     vlib_cli_command_t *cmd)
+{
+    (void)cmd;
+    char *filename = NULL;
+    u32 num_rules = 100;
+    FILE *fp;
+
+    while (unformat_check_input(input) != UNFORMAT_END_OF_INPUT)
+    {
+        if (unformat(input, "%s", &filename))
+            ;
+        else if (unformat(input, "count %u", &num_rules))
+            ;
+        else
+            return clib_error_return(0, "unknown input `%U'", format_unformat_error, input);
+    }
+
+    if (!filename)
+        return clib_error_return(0, "Filename must be specified");
+
+    if (num_rules == 0 || num_rules > 100000)
+        return clib_error_return(0, "Rule count must be between 1 and 100000");
+
+    fp = fopen(filename, "w");
+    if (!fp)
+        return clib_error_return(0, "Failed to create file: %s", filename);
+
+    vlib_cli_output(vm, "Creating sample ACL file with %u rules: %s", num_rules, filename);
+
+    /* Write sample rules - mix of permit and deny rules */
+    fprintf(fp, "# IPS ACL Rules Sample File\n");
+    fprintf(fp, "# Format: permit|deny src IP/prefix dst IP/prefix [proto] [sport] [dport]\n");
+    fprintf(fp, "#\n");
+
+    for (u32 i = 0; i < num_rules; i++)
+    {
+        u32 src_net = (i / 256) % 256;
+        u32 dst_net = (i / 65536) % 256;
+
+        /* Alternate between permit and deny */
+        const char *action = (i % 10 == 0) ? "deny" : "permit";
+
+        /* Write rule: deny/permit src 10.src_net.0.0/24 dst 172.dst_net.0.0/16 proto tcp dport 80 */
+        fprintf(fp, "%s src 10.%u.0.0/24 dst 172.%u.0.0/16 proto tcp dport 80\n",
+                action, src_net, dst_net);
+    }
+
+    fclose(fp);
+
+    vlib_cli_output(vm, "Sample ACL file created: %s", filename);
+    vlib_cli_output(vm, "  Total rules: %u", num_rules);
+    vlib_cli_output(vm, "\nTo load these rules, use:");
+    vlib_cli_output(vm, "  ips acl load from file %s", filename);
+
+    vec_free(filename);
+    return 0;
+}
+
+VLIB_CLI_COMMAND(ips_acl_create_sample_file_command, static) = {
+    .path = "ips acl create sample file",
+    .short_help = "ips acl create sample file <filename> [count <n>]\n"
+                  "  Create a sample ACL rules file for testing\n"
+                  "  Default count: 100 rules, Max: 100000 rules",
+    .function = ips_acl_create_sample_file_command_fn,
+};
+
+/*
+ * ========================================================================
+ * Batch Mode Management Commands - Unified Batch/Single Rule Architecture
+ * ========================================================================
+ */
+
+/**
+ * @brief CLI command to show all batch ACL groups
+ */
+static clib_error_t *
+ips_acl_show_batch_groups_command_fn(vlib_main_t *vm,
+                                     unformat_input_t *input,
+                                     vlib_cli_command_t *cmd)
+{
+    (void)input;
+    (void)cmd;
+    ips_acl_manager_t *am = &ips_acl_manager;
+    ips_acl_batch_manager_t *bm = &am->batch_manager;
+    ips_acl_batch_group_t *group;
+
+    if (pool_elts(bm->groups) == 0)
+    {
+        vlib_cli_output(vm, "No ACL batch groups configured.");
+        return 0;
+    }
+
+    vlib_cli_output(vm, "IPS ACL Batch Groups:");
+    vlib_cli_output(vm, "%-10s %-12s %-10s %-10s %-15s %-20s",
+                   "Group ID", "VPP ACL Idx", "Rule Count", "Enabled", "Total Hits", "Created (sec ago)");
+    vlib_cli_output(vm, "%-10s %-12s %-10s %-10s %-15s %-20s",
+                   "---------", "------------", "----------", "----------", "---------------", "-------------------");
+
+    pool_foreach(group, bm->groups)
+    {
+        f64 time_ago = vlib_time_now(vm) - group->create_time;
+        vlib_cli_output(vm, "%-10u %-12u %-10u %-10s %-15lu %-20.2f",
+                       group->group_id,
+                       group->vpp_acl_index,
+                       group->rule_count,
+                       group->is_enabled ? "Yes" : "No",
+                       group->total_hits,
+                       time_ago);
+    }
+
+    vlib_cli_output(vm, "");
+    vlib_cli_output(vm, "Total batch groups: %u", pool_elts(bm->groups));
+    vlib_cli_output(vm, "");
+    vlib_cli_output(vm, "Use 'ips acl show batch rules <group-id>' to see rules in a group.");
+
+    return 0;
+}
+
+VLIB_CLI_COMMAND(ips_acl_show_batch_groups_command, static) = {
+    .path = "ips acl show batch groups",
+    .short_help = "ips acl show batch groups\n"
+                  "  Display all ACL batch groups with statistics",
+    .function = ips_acl_show_batch_groups_command_fn,
+};
+
+/**
+ * @brief CLI command to show rules within a batch group
+ */
+static clib_error_t *
+ips_acl_show_batch_rules_command_fn(vlib_main_t *vm,
+                                    unformat_input_t *input,
+                                    vlib_cli_command_t *cmd)
+{
+    (void)cmd;
+    ips_acl_manager_t *am = &ips_acl_manager;
+    ips_acl_batch_manager_t *bm = &am->batch_manager;
+    ips_acl_batch_group_t *group;
+    u32 group_id = ~0;
+
+    while (unformat_check_input(input) != UNFORMAT_END_OF_INPUT)
+    {
+        if (unformat(input, "%u", &group_id))
+            ;
+        else
+            return clib_error_return(0, "unknown input `%U'", format_unformat_error, input);
+    }
+
+    if (group_id == ~0)
+        return clib_error_return(0, "Group ID must be specified");
+
+    /* Find the batch group */
+    group = NULL;
+    pool_foreach(group, bm->groups)
+    {
+        if (group->group_id == group_id)
+            break;
+        group = NULL;
+    }
+
+    if (!group)
+        return clib_error_return(0, "Batch group %u not found", group_id);
+
+    vlib_cli_output(vm, "Batch Group ID: %u", group->group_id);
+    vlib_cli_output(vm, "  VPP ACL Index: %u", group->vpp_acl_index);
+    vlib_cli_output(vm, "  Rule Count: %u", group->rule_count);
+    vlib_cli_output(vm, "  Enabled: %s", group->is_enabled ? "Yes" : "No");
+    vlib_cli_output(vm, "  Total Hits: %lu", group->total_hits);
+    vlib_cli_output(vm, "  Created: %.2f seconds ago", vlib_time_now(vm) - group->create_time);
+    vlib_cli_output(vm, "");
+    vlib_cli_output(vm, "Rules in this group:");
+
+    /* Display each rule with its statistics */
+    vlib_cli_output(vm, "%-8s %-8s %-25s %-25s %-10s %-10s %-10s %-15s",
+                   "VPP Idx", "Rule ID", "Source IP", "Dest IP", "Proto", "Dst Port", "Enabled", "Hit Count");
+    vlib_cli_output(vm, "%-8s %-8s %-25s %-25s %-10s %-10s %-10s %-15s",
+                   "--------", "--------", "-------------------------",
+                   "-------------------------", "----------", "----------", "----------", "---------------");
+
+    for (u32 i = 0; i < vec_len(group->rules); i++)
+    {
+        ips_acl_rule_t *rule = group->rules[i];
+        if (!rule)
+            continue;
+
+        /* Format IP addresses using VPP format function */
+        u8 *src_ip_str = NULL;
+        u8 *dst_ip_str = NULL;
+
+        if (rule->is_ipv6)
+        {
+            src_ip_str = format(0, "%U/%u", format_ip6_address, &rule->src_ip.ip6, rule->src_prefixlen);
+            dst_ip_str = format(0, "%U/%u", format_ip6_address, &rule->dst_ip.ip6, rule->dst_prefixlen);
+        }
+        else
+        {
+            src_ip_str = format(0, "%U/%u", format_ip4_address, &rule->src_ip.ip4, rule->src_prefixlen);
+            dst_ip_str = format(0, "%U/%u", format_ip4_address, &rule->dst_ip.ip4, rule->dst_prefixlen);
+        }
+
+        /* Format protocol */
+        const char *proto_str = "any";
+        if (rule->protocol == 6)
+            proto_str = "tcp";
+        else if (rule->protocol == 17)
+            proto_str = "udp";
+        else if (rule->protocol == 1)
+            proto_str = "icmp";
+
+        /* Format destination port */
+        char dst_port_str[16] = "any";
+        if (rule->dst_port_start == rule->dst_port_end)
+            snprintf(dst_port_str, sizeof(dst_port_str), "%u", rule->dst_port_start);
+        else if (rule->dst_port_start > 0 || rule->dst_port_end > 0)
+            snprintf(dst_port_str, sizeof(dst_port_str), "%u-%u",
+                    rule->dst_port_start, rule->dst_port_end);
+
+        /* Format action */
+        const char *action_str = "???";
+        switch (rule->action)
+        {
+            case IPS_ACL_ACTION_PERMIT:
+                action_str = "permit";
+                break;
+            case IPS_ACL_ACTION_DENY:
+                action_str = "deny";
+                break;
+            case IPS_ACL_ACTION_RESET:
+                action_str = "reset";
+                break;
+            case IPS_ACL_ACTION_LOG:
+                action_str = "log";
+                break;
+        }
+
+        vlib_cli_output(vm, "%-8u %-8u %-25s %-25s %-10s %-10s %-10s %-15lu  %s",
+                       rule->vpp_rule_index,
+                       rule->rule_id,
+                       src_ip_str ? (char *)src_ip_str : "invalid",
+                       dst_ip_str ? (char *)dst_ip_str : "invalid",
+                       proto_str,
+                       dst_port_str,
+                       rule->enabled ? "Yes" : "No",
+                       rule->hit_count,
+                       action_str);
+
+        /* Free temporary strings */
+        vec_free(src_ip_str);
+        vec_free(dst_ip_str);
+    }
+
+    vlib_cli_output(vm, "");
+    vlib_cli_output(vm, "Total: %u rules", vec_len(group->rules));
+
+    return 0;
+}
+
+VLIB_CLI_COMMAND(ips_acl_show_batch_rules_command, static) = {
+    .path = "ips acl show batch rules",
+    .short_help = "ips acl show batch rules <group-id>\n"
+                  "  Display detailed rules in a specific batch group",
+    .function = ips_acl_show_batch_rules_command_fn,
+};

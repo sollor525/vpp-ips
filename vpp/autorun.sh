@@ -305,6 +305,17 @@ echo "启动新的 VPP 进程..."
 # 清空旧日志
 rm -f /tmp/vpp.log
 
+# 配置 hyperscan 动态库路径
+HYPERSCAN_LIB_PATH="/root/workspace/vpp-ips/3rd-dep/hyperscan/hyperscan/build/lib"
+if [[ -d "$HYPERSCAN_LIB_PATH" ]]; then
+    echo "配置 hyperscan 动态库路径: $HYPERSCAN_LIB_PATH"
+    export LD_LIBRARY_PATH="$HYPERSCAN_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+else
+    echo "⚠️  警告: hyperscan 库路径不存在: $HYPERSCAN_LIB_PATH"
+    echo "ips_mirror plugin 可能无法正常加载"
+fi
+
 # 启动 VPP（后台运行）
 "$VPP_BIN" -c /etc/vpp/startup.conf >/tmp/vpp.log 2>&1 &
 
@@ -490,4 +501,8 @@ echo "调试提示:"
 echo "1. 使用 'gdb $VPP_BIN /opt/corfiles/vpp.\$PID.\$TIMESTAMP.core' 进行调试"
 echo "2. 检查 'dmesg | grep -i segfault' 查看崩溃信息"
 echo "3. 查看日志 'tail -f /tmp/vpp.log'"
+echo ""
+echo "Hyperscan 库配置:"
+echo "路径: $HYPERSCAN_LIB_PATH"
+echo "验证: ldd \$(which vpp) | grep hs || echo 'Hyperscan 库未链接到 VPP 主程序，但插件会动态加载'"
 

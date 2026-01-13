@@ -286,7 +286,8 @@ suricata_inspect_node_fn (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_fra
     ips_suricata_inspect_trace_t *t = NULL;
     CLIB_UNUSED (u32 *from) = vlib_frame_vector_args (frame);
     vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
-    u16 n_left_from, n_left_to_next;
+    u16 n_left_from;
+    CLIB_UNUSED (u16 n_left_to_next);
 
     u32 thread_index = vm->thread_index;
     ips_suricata_inspect_stats_t *stats = &suricata_inspect_stats[thread_index];

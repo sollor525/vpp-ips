@@ -179,8 +179,8 @@ ips_session_timer_start (const ips_session_timer_start_args_t *args)
     u32 session_index = args->session_index;
     u32 timeout_seconds = args->timeout_seconds;
 
-    /* Convert timeout to timer ticks - use TCP tick as reference */
-    u32 timeout_ticks = timeout_seconds * 10000;  /* TCP_TO_TIMER_TICK factor */
+    /* Convert timeout to timer ticks using configured ticks per second */
+    u32 timeout_ticks = timeout_seconds * ptt->config.timer_wheel_ticks_per_second;
 
     /* Clamp to reasonable maximum */
     if (timeout_ticks > 0xFFFFFFFF)

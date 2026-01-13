@@ -142,6 +142,113 @@ typedef enum
     IPS_ACTION_MAX,
 } ips_action_t;
 
+/* IPS Node Simple Counters - Compatible with vlib_increment_simple_counter */
+typedef enum
+{
+    /* General counters - applicable to all nodes */
+    IPS_COUNTER_PACKETS_RECEIVED = 0,
+    IPS_COUNTER_PACKETS_PROCESSED,
+    IPS_COUNTER_PACKETS_DROPPED,
+    IPS_COUNTER_PACKETS_FORWARDED,
+    IPS_COUNTER_BYTES_RECEIVED,
+    IPS_COUNTER_BYTES_PROCESSED,
+
+    /* Input node counters */
+    IPS_COUNTER_IPV4_PACKETS,
+    IPS_COUNTER_IPV6_PACKETS,
+    IPS_COUNTER_TCP_PACKETS,
+    IPS_COUNTER_UDP_PACKETS,
+    IPS_COUNTER_OTHER_PROTOCOLS,
+    IPS_COUNTER_MALFORMED_PACKETS,
+    IPS_COUNTER_NON_TCP_DROPPED,
+
+    /* Session management counters */
+    IPS_COUNTER_SESSION_NOT_FOUND,
+
+    /* TCP processing counters */
+    IPS_COUNTER_TCP_REORDER_PROCESSED,
+    IPS_COUNTER_TCP_REORDER_BYPASSED,
+    IPS_COUNTER_TCP_SESSION_PROCESSED,
+
+    /* Inspection counters */
+    IPS_COUNTER_INSPECTION_PROCESSED,
+    IPS_COUNTER_INSPECTION_PERFORMED,
+    IPS_COUNTER_RULE_MATCHES,
+    IPS_COUNTER_RULES_TRIGGERED,
+    IPS_COUNTER_PACKETS_PASSED,
+
+    /* Protocol detection counters */
+    IPS_COUNTER_PROTOCOL_DETECTION_PROCESSED,
+    IPS_COUNTER_PROTOCOL_DETECTION_ATTEMPTS,
+    IPS_COUNTER_PROTOCOL_DETECTION_SUCCESS,
+    IPS_COUNTER_PROTOCOLS_DETECTED,
+    IPS_COUNTER_PROTOCOL_INSUFFICIENT_DATA,
+    IPS_COUNTER_PROTOCOL_NO_PAYLOAD,
+
+    /* TCP Session node counters */
+    IPS_COUNTER_SESSIONS_CREATED,
+    IPS_COUNTER_SESSIONS_LOOKUP_HIT,
+    IPS_COUNTER_SESSIONS_LOOKUP_MISS,
+    IPS_COUNTER_SESSIONS_TIMEOUT,
+    IPS_COUNTER_SESSIONS_EXPIRED,
+    IPS_COUNTER_SESSION_STATE_TRANSITIONS,
+
+    /* TCP ACL node counters */
+    IPS_COUNTER_ACL_CHECKS,
+    IPS_COUNTER_ACL_PERMITS,
+    IPS_COUNTER_ACL_DENIES,
+    IPS_COUNTER_ACL_RESETS,
+    IPS_COUNTER_ACL_SESSIONS_BLOCKED,
+    IPS_COUNTER_ACL_SESSIONS_EXISTING_BLOCKED,
+    IPS_COUNTER_VPP_ACL_HITS,
+    IPS_COUNTER_VPP_ACL_PERMIT_HITS,
+    IPS_COUNTER_VPP_ACL_DENY_HITS,
+    IPS_COUNTER_ACL_UNKNOWN_ACTIONS,
+
+    /* TCP Reorder node counters */
+    IPS_COUNTER_REORDER_PROCESSED,
+    IPS_COUNTER_REORDER_IN_ORDER,
+    IPS_COUNTER_REORDER_OUT_OF_ORDER,
+    IPS_COUNTER_REORDER_BUFFERED,
+    IPS_COUNTER_REORDER_REASSEMBLED,
+    IPS_COUNTER_REORDER_BUFFER_OVERFLOW,
+    IPS_COUNTER_REORDER_TIMEOUTS,
+    IPS_COUNTER_REORDER_FAILED,
+
+    /* Inspection node counters */
+    IPS_COUNTER_INSPECTION_CALLS,
+    IPS_COUNTER_PATTERN_MATCHES,
+    IPS_COUNTER_HYPERSCAN_CALLS,
+    IPS_COUNTER_PCRE_CALLS,
+    IPS_COUNTER_ALERTS_GENERATED,
+    IPS_COUNTER_INSPECTION_ERRORS,
+
+    /* Protocol detection node counters */
+    IPS_COUNTER_PROTO_HTTP,
+    IPS_COUNTER_PROTO_HTTPS,
+    IPS_COUNTER_PROTO_TLS,
+    IPS_COUNTER_PROTO_SSH,
+    IPS_COUNTER_PROTO_DNS,
+    IPS_COUNTER_PROTO_FTP,
+    IPS_COUNTER_PROTO_UNKNOWN,
+    IPS_COUNTER_PROTO_DETECTION_FAILED,
+
+    /* Block node counters */
+    IPS_COUNTER_BLOCKS_SENT,
+    IPS_COUNTER_TCP_RESETS_SENT,
+    IPS_COUNTER_BLOCK_ERRORS,
+    IPS_COUNTER_BLOCKS_ALREADY_BLOCKED,
+
+    /* Logging counters */
+    IPS_COUNTER_LOG_ENTRIES_GENERATED,
+    IPS_COUNTER_LOG_ACL_HITS,
+    IPS_COUNTER_LOG_IDS_MATCHES,
+    IPS_COUNTER_LOG_BUFFER_FULL,
+    IPS_COUNTER_LOG_WRITE_ERRORS,
+
+    IPS_COUNTER_MAX  /* Must be last */
+} ips_counter_type_t;
+
 /* Simplified TCP State Definitions - Adapted for Mirror Traffic
  * In mirror mode, we see bidirectional traffic simultaneously,
  * so we don't need to distinguish between SYN_SENT and SYN_RECV */
@@ -532,6 +639,84 @@ typedef struct
     u32 session_index;
 } ips_flow_t;
 
+/* Individual node statistics structures */
+typedef struct
+{
+    /* Input node statistics */
+    u64 input_packets_received;
+    u64 input_bytes_received;
+    u64 input_ipv4_packets;
+    u64 input_ipv6_packets;
+    u64 input_tcp_packets;
+    u64 input_udp_packets;
+    u64 input_other_protocols;
+    u64 input_non_tcp_dropped;
+
+    /* TCP session node statistics */
+    u64 session_new_created;
+    u64 session_lookup_hits;
+    u64 session_lookup_misses;
+    u64 session_timeouts;
+    u64 session_state_transitions;
+    u64 session_expired_cleaned;
+
+    /* TCP reorder node statistics */
+    u64 reorder_packets_processed;
+    u64 reorder_in_order_packets;
+    u64 reorder_out_of_order_packets;
+    u64 reorder_buffered_packets;
+    u64 reorder_reassembled_packets;
+    u64 reorder_buffer_overflows;
+    u64 reorder_timeouts;
+
+    /* TCP ACL node statistics */
+    u64 acl_packets_checked;
+    u64 acl_packets_permitted;
+    u64 acl_packets_denied;
+    u64 acl_packets_reset;
+    u64 acl_sessions_blocked;
+    u64 acl_sessions_existing_blocked;
+    u64 acl_vpp_rule_hits;
+    u64 acl_vpp_permit_hits;
+    u64 acl_vpp_deny_hits;
+    u64 acl_unknown_actions;
+    u64 acl_session_not_found;
+    u64 acl_errors;
+
+    /* Inspection node statistics */
+    u64 inspect_packets_processed;
+    u64 inspect_bytes_processed;
+    u64 inspect_hyperscan_calls;
+    u64 inspect_pcre_calls;
+    u64 inspect_rule_matches;
+    u64 inspect_pattern_matches;
+    u64 inspect_no_rules;
+    u64 inspect_processing_time_us;
+
+    /* Protocol detection node statistics */
+    u64 proto_packets_processed;
+    u64 proto_http_detected;
+    u64 proto_https_detected;
+    u64 proto_tls_detected;
+    u64 proto_ssh_detected;
+    u64 proto_dns_detected;
+    u64 proto_ftp_detected;
+    u64 proto_unknown_detected;
+
+    /* Block node statistics */
+    u64 block_packets_dropped;
+    u64 block_tcp_reset_sent;
+    u64 block_sessions_already_blocked;
+    u64 block_errors;
+
+    /* Logging node statistics */
+    u64 log_entries_generated;
+    u64 log_acl_hits;
+    u64 log_ids_matches;
+    u64 log_buffer_full;
+    u64 log_write_errors;
+} ips_node_stats_t;
+
 /* Per-thread data */
 typedef struct
 {
@@ -540,11 +725,14 @@ typedef struct
     ips_flow_t *flows;
     u32 *free_flow_indices;
 
-    /* Statistics */
+    /* Legacy statistics - for backward compatibility */
     u64 total_packets;
     u64 total_bytes;
     u64 dropped_packets;
     u64 alerted_packets;
+
+    /* Enhanced node-specific statistics */
+    ips_node_stats_t node_stats;
 
     /* Timing */
     f64 last_cleanup_time;
@@ -555,6 +743,9 @@ typedef struct
 {
     /* API message ID base */
     u16 msg_id_base;
+
+    /* Simple counters for all nodes - compatible with vlib_increment_simple_counter */
+    vlib_simple_counter_main_t *counters;
 
     /* Per-thread data */
     ips_per_thread_data_t *per_thread_data;

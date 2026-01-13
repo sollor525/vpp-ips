@@ -29,17 +29,7 @@ typedef enum
     IPS_INSPECT_N_NEXT,
 } ips_inspect_next_t;
 
-/* Statistics */
-typedef struct
-{
-    u64 packets_inspected;
-    u64 rules_matched;
-    u64 packets_blocked;
-    u64 packets_alerted;
-    u64 packets_passed;
-} ips_inspect_stats_t;
-
-static ips_inspect_stats_t *ips_inspect_stats;
+/* Note: Statistics now use VPP's unified counter system via ips_main.counters */
 
 static u8 *
 format_ips_inspect_trace (u8 *s, va_list *args)
@@ -167,7 +157,15 @@ ips_inspect_node_fn (vlib_main_t *vm,
 {
     u32 n_left_from, *from;
     u32 thread_index = vm->thread_index;
-    ips_inspect_stats_t *stats = &ips_inspect_stats[thread_index];
+
+    /* Local counters for the entire frame */
+    u32 inspection_performed_count = 0;
+    u32 rule_matches_count = 0;
+    u32 rules_triggered_count = 0;
+    u32 alerts_generated_count = 0;
+    u32 packets_dropped_count = 0;
+    u32 packets_passed_count = 0;
+    u32 sessions_not_found_count = 0;
 
     from = vlib_frame_vector_args (frame);
     n_left_from = frame->n_vectors;
@@ -177,82 +175,105 @@ ips_inspect_node_fn (vlib_main_t *vm,
         u32 bi0;
         vlib_buffer_t *b0;
         u32 next0 = IPS_INSPECT_NEXT_DROP;  /* Default: drop for mirror traffic */
-        u8 is_ip6 = 0;
-        
+
         bi0 = from[0];
         b0 = vlib_get_buffer (vm, bi0);
-        
-        /* Determine if IPv4 or IPv6 */
-        u8 *ip_start = vlib_buffer_get_current (b0);
-        if (b0->current_length >= sizeof(ip4_header_t))
-        {
-            ip4_header_t *ip4h = (ip4_header_t *)ip_start;
-            is_ip6 = ((ip4h->ip_version_and_header_length & 0xF0) == 0x60);
-        }
-        
-        /* Get session by looking up IP/TCP headers */
+
+        /* Counters will be incremented after processing the entire frame */
+
+        /* Try to get session from cached session_index first (performance optimization) */
         ips_session_t *session = NULL;
-        if (b0->current_length >= sizeof(ip4_header_t))
+        u32 session_index = vnet_buffer(b0)->unused[0];
+
+        /* Get session manager data for direct pool access */
+        ips_session_manager_t *sm = &ips_session_manager;
+        ips_session_per_thread_data_t *ptd = &sm->per_thread_data[thread_index];
+
+        /* Try direct pool access using cached session_index */
+        if (session_index != ~0 &&  /* Check if session_index is valid */
+            PREDICT_TRUE(session_index < pool_len(ptd->session_pool) &&
+                         !pool_is_free_index(ptd->session_pool, session_index)))
         {
-            ip4_header_t *ip4h = (ip4_header_t *)ip_start;
-            
-            if ((ip4h->ip_version_and_header_length & 0xF0) == 0x40)  /* IPv4 */
+            session = pool_elt_at_index(ptd->session_pool, session_index);
+
+            /* Validate session matches */
+            if (PREDICT_FALSE(session->session_index != session_index ||
+                               session->thread_index != thread_index))
             {
-                if (ip4h->protocol == IP_PROTOCOL_TCP)
-                {
-                    u32 ip_header_len = (ip4h->ip_version_and_header_length & 0x0f) * 4;
-                    tcp_header_t *tcph = (tcp_header_t *)((u8 *)ip4h + ip_header_len);
-                    ips_session_key4_t key4;
-                    build_session_key4(&key4, ip4h, tcph);
-                    session = ips_session_lookup_ipv4(thread_index, &key4);
-                }
+                session = NULL; /* Session reused or invalid */
             }
-            else if ((ip4h->ip_version_and_header_length & 0xF0) == 0x60)  /* IPv6 */
+        }
+
+        /* Fallback to hash lookup if direct access failed or session_index not cached */
+        if (PREDICT_FALSE(session == NULL))
+        {
+            u8 *ip_start = vlib_buffer_get_current (b0);
+            if (b0->current_length >= sizeof(ip4_header_t))
             {
-                ip6_header_t *ip6h = (ip6_header_t *)ip4h;
-                if (ip6h->protocol == IP_PROTOCOL_TCP)
+                ip4_header_t *ip4h = (ip4_header_t *)ip_start;
+
+                if ((ip4h->ip_version_and_header_length & 0xF0) == 0x40)  /* IPv4 */
                 {
-                    tcp_header_t *tcph = (tcp_header_t *)((u8 *)ip6h + sizeof(ip6_header_t));
-                    ips_session_key6_t key6;
-                    build_session_key6(&key6, ip6h, tcph);
-                    session = ips_session_lookup_ipv6(thread_index, &key6);
+                    if (ip4h->protocol == IP_PROTOCOL_TCP)
+                    {
+                        u32 ip_header_len = (ip4h->ip_version_and_header_length & 0x0f) * 4;
+                        tcp_header_t *tcph = (tcp_header_t *)((u8 *)ip4h + ip_header_len);
+                        ips_session_key4_t key4;
+                        build_session_key4(&key4, ip4h, tcph);
+                        session = ips_session_lookup_ipv4(thread_index, &key4);
+                    }
+                }
+                else if ((ip4h->ip_version_and_header_length & 0xF0) == 0x60)  /* IPv6 */
+                {
+                    ip6_header_t *ip6h = (ip6_header_t *)ip4h;
+                    if (ip6h->protocol == IP_PROTOCOL_TCP)
+                    {
+                        tcp_header_t *tcph = (tcp_header_t *)((u8 *)ip6h + sizeof(ip6_header_t));
+                        ips_session_key6_t key6;
+                        build_session_key6(&key6, ip6h, tcph);
+                        session = ips_session_lookup_ipv6(thread_index, &key6);
+                    }
                 }
             }
         }
         
         if (session)
         {
-            stats->packets_inspected++;
-            
+            /* Increment local inspection counter */
+            inspection_performed_count++;
+
             /* Get detected protocol */
             ips_proto_detect_ctx_t *proto_ctx = ips_get_proto_detect_ctx(session);
             ips_alproto_t proto = proto_ctx ? proto_ctx->detected_protocol : IPS_ALPROTO_UNKNOWN;
-            
+
             /* Perform IPS rule inspection */
             u32 rule_matches = 0;
             u32 action = ips_inspect_packet(session, b0, proto, &rule_matches);
-            
-            stats->rules_matched += rule_matches;
-            
+
+            /* Increment local rule match counters */
+            rule_matches_count += rule_matches;
+
             /* Determine next node based on action */
             if (action == 2)  /* Drop */
             {
                 /* Mark session as blocked and send to block node */
                 session->flags |= IPS_SESSION_FLAG_BLOCKED;
                 next0 = IPS_INSPECT_NEXT_BLOCK;
-                stats->packets_blocked++;
+                packets_dropped_count++;
+                rules_triggered_count++;
             }
             else if (action == 1)  /* Alert */
             {
                 /* Generate alert but drop packet (mirror traffic) */
                 /* TODO: Add alert logging */
                 next0 = IPS_INSPECT_NEXT_DROP;
-                stats->packets_alerted++;
+                alerts_generated_count++;
+                rules_triggered_count++;
             }
             else  /* Pass */
             {
                 next0 = IPS_INSPECT_NEXT_DROP;  /* Drop for mirror traffic */
-                stats->packets_passed++;
+                packets_passed_count++;
             }
             
             /* Add trace if enabled */
@@ -270,6 +291,9 @@ ips_inspect_node_fn (vlib_main_t *vm,
         {
             /* No session - drop for mirror traffic */
             next0 = IPS_INSPECT_NEXT_DROP;
+
+            /* Increment local session not found counter */
+            sessions_not_found_count++;
         }
         
         /* Enqueue packet to next node */
@@ -279,22 +303,56 @@ ips_inspect_node_fn (vlib_main_t *vm,
         n_left_from -= 1;
     }
 
+    /* Increment counters for the entire frame */
+    if (frame->n_vectors > 0) {
+        vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_PACKETS_RECEIVED], thread_index, 0,
+                                      frame->n_vectors);
+
+        /* Calculate total bytes - use original frame pointer */
+        u32 *original_from = vlib_frame_vector_args (frame);
+        if (frame->n_vectors > 0) {
+            u32 first_bi = original_from[0];
+            vlib_buffer_t *first_b = vlib_get_buffer(vm, first_bi);
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_BYTES_RECEIVED], thread_index, 0,
+                                          first_b->current_length * frame->n_vectors);
+        }
+
+        vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_INSPECTION_PROCESSED], thread_index, 0,
+                                      frame->n_vectors);
+
+        /* Increment inspection-specific counters */
+        if (inspection_performed_count > 0) {
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_INSPECTION_PERFORMED], thread_index, 0,
+                                          inspection_performed_count);
+        }
+        if (rule_matches_count > 0) {
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_RULE_MATCHES], thread_index, 0,
+                                          rule_matches_count);
+        }
+        if (rules_triggered_count > 0) {
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_RULES_TRIGGERED], thread_index, 0,
+                                          rules_triggered_count);
+        }
+        if (alerts_generated_count > 0) {
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_ALERTS_GENERATED], thread_index, 0,
+                                          alerts_generated_count);
+        }
+        if (packets_dropped_count > 0) {
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_PACKETS_DROPPED], thread_index, 0,
+                                          packets_dropped_count);
+        }
+        if (packets_passed_count > 0) {
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_PACKETS_PASSED], thread_index, 0,
+                                          packets_passed_count);
+        }
+        if (sessions_not_found_count > 0) {
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_SESSION_NOT_FOUND], thread_index, 0,
+                                          sessions_not_found_count);
+        }
+    }
+
     return frame->n_vectors;
 }
-
-/**
- * @brief Initialize IPS inspect node
- */
-static clib_error_t *
-ips_inspect_init (vlib_main_t *vm)
-{
-    u32 num_threads = vlib_get_n_threads();
-    vec_validate(ips_inspect_stats, num_threads - 1);
-    clib_memset(ips_inspect_stats, 0, num_threads * sizeof(ips_inspect_stats_t));
-    return 0;
-}
-
-VLIB_INIT_FUNCTION (ips_inspect_init);
 
 VLIB_REGISTER_NODE (ips_inspect_node) = {
     .function = ips_inspect_node_fn,
@@ -302,11 +360,12 @@ VLIB_REGISTER_NODE (ips_inspect_node) = {
     .vector_size = sizeof (u32),
     .format_trace = format_ips_inspect_trace,
     .type = VLIB_NODE_TYPE_INTERNAL,
-    
+
     .n_next_nodes = IPS_INSPECT_N_NEXT,
     .next_nodes = {
         [IPS_INSPECT_NEXT_DROP] = "error-drop",
         [IPS_INSPECT_NEXT_BLOCK] = "ips-block-node",
     },
+    
 };
 

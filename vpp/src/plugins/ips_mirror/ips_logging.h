@@ -32,6 +32,8 @@ typedef enum
     IPS_LOG_ENTRY_RULE_MATCH = 0,
     IPS_LOG_ENTRY_TCP_DETAILS,
     IPS_LOG_ENTRY_SYSTEM,
+    IPS_LOG_ENTRY_ACL_HIT,
+    IPS_LOG_ENTRY_IDS_MATCH,
 } ips_log_entry_type_t;
 
 /* Maximum sizes for log entry fields */
@@ -40,6 +42,59 @@ typedef enum
 #define IPS_LOG_MAX_FLOW_INFO_SIZE 128
 #define IPS_LOG_MAX_TCP_FLAGS_SIZE 16
 #define IPS_LOG_MAX_ACTION_SIZE 16
+#define IPS_LOG_MAX_REASON_SIZE 256
+#define IPS_LOG_MAX_RULE_ID_SIZE 64
+
+/* Five-tuple information for detailed logging */
+typedef struct
+{
+    ip4_address_t src_ip4;
+    ip4_address_t dst_ip4;
+    ip6_address_t src_ip6;
+    ip6_address_t dst_ip6;
+    u16 src_port;
+    u16 dst_port;
+    u8 protocol;
+    u8 is_ip6;
+    char src_ip_str[46];  /* IPv4 or IPv6 string representation */
+    char dst_ip_str[46];  /* IPv4 or IPv6 string representation */
+} ips_log_five_tuple_t;
+
+/* Log entry for ACL hit */
+typedef struct
+{
+    f64 timestamp;
+    u32 session_id;
+    ips_log_five_tuple_t five_tuple;
+    u32 acl_rule_id;
+    char action[IPS_LOG_MAX_ACTION_SIZE];
+    char reason[IPS_LOG_MAX_REASON_SIZE];
+    u8 tcp_flags;
+    u32 tcp_state;
+    u8 vpp_acl_hit;
+    u32 packet_len;
+} ips_log_acl_hit_entry_t;
+
+/* Log entry for IDS match */
+typedef struct
+{
+    f64 timestamp;
+    u32 session_id;
+    ips_log_five_tuple_t five_tuple;
+    u32 rule_id;
+    u32 sid;
+    u32 gid;
+    u32 priority;
+    char action[IPS_LOG_MAX_ACTION_SIZE];
+    char msg[IPS_LOG_MAX_MSG_SIZE];
+    char classification[IPS_LOG_MAX_CLASSIFICATION_SIZE];
+    char rule_id_str[IPS_LOG_MAX_RULE_ID_SIZE];
+    u32 packet_len;
+    u32 match_offset;
+    u32 pattern_len;
+    u8 app_proto;
+    f64 detection_time_us;
+} ips_log_ids_match_entry_t;
 
 /* Log entry for rule match */
 typedef struct
@@ -73,6 +128,8 @@ typedef struct
     union {
         ips_log_rule_match_entry_t rule_match;
         ips_log_tcp_details_entry_t tcp_details;
+        ips_log_acl_hit_entry_t acl_hit;
+        ips_log_ids_match_entry_t ids_match;
         char system_msg[IPS_LOG_MAX_MSG_SIZE];
     } data;
 } ips_log_entry_t;
@@ -159,6 +216,86 @@ void ips_log_tcp_details_async (const char *tcp_flags, u32 seq, u32 ack, u16 win
 
 void ips_log_system_async (ips_log_level_t level, const char *format, ...);
 
+/* Helper function for extracting five-tuple from packet */
+static inline void ips_extract_five_tuple (vlib_buffer_t *b, ips_log_five_tuple_t *five_tuple, int is_ip6)
+{
+    clib_memset (five_tuple, 0, sizeof (*five_tuple));
+    five_tuple->is_ip6 = is_ip6;
+
+    if (!is_ip6)
+    {
+        ip4_header_t *ip4h = vlib_buffer_get_current (b);
+        if (ip4h->protocol == IP_PROTOCOL_TCP)
+        {
+            tcp_header_t *tcph = ip4_next_header (ip4h);
+            five_tuple->src_ip4 = ip4h->src_address;
+            five_tuple->dst_ip4 = ip4h->dst_address;
+            five_tuple->src_port = clib_net_to_host_u16 (tcph->src_port);
+            five_tuple->dst_port = clib_net_to_host_u16 (tcph->dst_port);
+            five_tuple->protocol = IP_PROTOCOL_TCP;
+        }
+        else
+        {
+            five_tuple->src_ip4 = ip4h->src_address;
+            five_tuple->dst_ip4 = ip4h->dst_address;
+            five_tuple->protocol = ip4h->protocol;
+        }
+
+        /* Convert to string representation - using format functions directly */
+        {
+            u8 *src_str = format(0, "%U", format_ip4_address, &five_tuple->src_ip4);
+            u8 *dst_str = format(0, "%U", format_ip4_address, &five_tuple->dst_ip4);
+            strncpy(five_tuple->src_ip_str, (char*)src_str, sizeof(five_tuple->src_ip_str) - 1);
+            strncpy(five_tuple->dst_ip_str, (char*)dst_str, sizeof(five_tuple->dst_ip_str) - 1);
+            vec_free(src_str);
+            vec_free(dst_str);
+        }
+    }
+    else
+    {
+        ip6_header_t *ip6h = vlib_buffer_get_current (b);
+        if (ip6h->protocol == IP_PROTOCOL_TCP)
+        {
+            tcp_header_t *tcph = ip6_next_header (ip6h);
+            five_tuple->src_ip6 = ip6h->src_address;
+            five_tuple->dst_ip6 = ip6h->dst_address;
+            five_tuple->src_port = clib_net_to_host_u16 (tcph->src_port);
+            five_tuple->dst_port = clib_net_to_host_u16 (tcph->dst_port);
+            five_tuple->protocol = IP_PROTOCOL_TCP;
+        }
+        else
+        {
+            five_tuple->src_ip6 = ip6h->src_address;
+            five_tuple->dst_ip6 = ip6h->dst_address;
+            five_tuple->protocol = ip6h->protocol;
+        }
+
+        /* Convert to string representation - using format functions directly */
+        {
+            u8 *src_str = format(0, "%U", format_ip6_address, &five_tuple->src_ip6);
+            u8 *dst_str = format(0, "%U", format_ip6_address, &five_tuple->dst_ip6);
+            strncpy(five_tuple->src_ip_str, (char*)src_str, sizeof(five_tuple->src_ip_str) - 1);
+            strncpy(five_tuple->dst_ip_str, (char*)dst_str, sizeof(five_tuple->dst_ip_str) - 1);
+            vec_free(src_str);
+            vec_free(dst_str);
+        }
+    }
+}
+
+/* New ACL and IDS logging functions - FAST PATH SAFE */
+void ips_log_acl_hit_async (u32 session_id, const ips_log_five_tuple_t *five_tuple,
+                           u32 acl_rule_id, const char *action, const char *reason,
+                           u8 tcp_flags, u32 tcp_state, u8 vpp_acl_hit,
+                           u32 packet_len, f64 timestamp, u32 thread_index);
+
+void ips_log_ids_match_async (u32 session_id, const ips_log_five_tuple_t *five_tuple,
+                             u32 rule_id, u32 sid, u32 gid, u32 priority,
+                             const char *action, const char *msg,
+                             const char *classification, const char *rule_id_str,
+                             u32 packet_len, u32 match_offset, u32 pattern_len,
+                             u8 app_proto, f64 detection_time_us, f64 timestamp,
+                             u32 thread_index);
+
 /* Background processing functions */
 void ips_log_flush_buffers (void);
 void ips_log_flush_single_buffer (ips_log_buffer_t *buffer);
@@ -172,6 +309,8 @@ void ips_log_buffer_cleanup (ips_log_buffer_t *buffer);
 /* File writing functions (called from background thread) */
 void ips_log_write_rule_match (ips_log_rule_match_entry_t *entry);
 void ips_log_write_tcp_details (ips_log_tcp_details_entry_t *entry);
+void ips_log_write_acl_hit (ips_log_acl_hit_entry_t *entry);
+void ips_log_write_ids_match (ips_log_ids_match_entry_t *entry);
 void ips_log_write_system_msg (const char *msg, ips_log_level_t level, f64 timestamp);
 
 /* Configuration functions */

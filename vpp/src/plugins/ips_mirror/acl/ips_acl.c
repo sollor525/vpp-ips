@@ -18,18 +18,14 @@
 #include <vppinfra/vec.h>
 #include <vppinfra/clib.h>
 #include <vppinfra/mem.h>
+#include <vppinfra/byte_order.h>
+#include <arpa/inet.h>
+#include <ctype.h>
 
 #include "../ips.h"
 #include "ips_acl.h"
 #include "session/ips_session.h"
 #include "../block/ips_block.h"
-
-
-
-/* Note: VPP ACL API integration uses the exported_types.h interface */
-/* #include <vlibmemory/api.h> */
-/* #include <plugins/acl/acl.api_enum.h> */
-/* #include <plugins/acl/acl_types.api> */
 
 
 /* Next node indices - these should match the actual node definitions */
@@ -607,6 +603,11 @@ ips_acl_init(vlib_main_t *vm)
     am->default_action = IPS_ACL_DEFAULT_ACTION;
     am->next_rule_id = 1;
 
+    /* Initialize batch mode manager */
+    am->batch_manager.next_group_id = 1;
+    am->batch_manager.num_groups = 0;
+    am->batch_manager.vpp_acl_to_group_map = NULL;
+
     /* Initialize TCP state tracking */
     am->enable_tcp_state_tracking = 1; /* Enable by default */
     am->max_sessions = 65536; /* Default max sessions */
@@ -630,9 +631,24 @@ void
 ips_acl_cleanup(void)
 {
     ips_acl_manager_t *am = &ips_acl_manager;
+    ips_acl_batch_manager_t *bm = &am->batch_manager;
 
     if (!am->acl_plugin_loaded)
         return;
+
+    /* Cleanup batch manager */
+    if (bm->groups)
+    {
+        ips_acl_batch_group_t *group;
+        pool_foreach(group, bm->groups)
+        {
+            /* Free rule pointers vector */
+            vec_free(group->rules);
+            vec_free(group->rule_index_map);
+        }
+        pool_free(bm->groups);
+    }
+    vec_free(bm->vpp_acl_to_group_map);
 
     /* Cleanup per-thread contexts */
     for (u32 i = 0; i < vec_len(am->per_thread_contexts); i++)
@@ -669,6 +685,54 @@ ips_acl_cleanup(void)
 
 /* Note: ips_acl_match_rule function removed as we now use VPP ACL plugin's
  * match_5tuple API directly in ips_acl_check_packet for all rule matching. */
+
+/**
+ * @brief Update batch rule statistics after VPP ACL match
+ *
+ * @param am IPS ACL manager
+ * @param vpp_acl_index VPP ACL index that matched
+ * @param vpp_rule_index Rule index within the VPP ACL
+ *
+ * This function updates the hit count and last hit time for the specific rule
+ * that matched in a batch ACL group.
+ */
+static void
+ips_acl_update_batch_rule_stats(ips_acl_manager_t *am,
+                                u32 vpp_acl_index,
+                                u32 vpp_rule_index)
+{
+    ips_acl_batch_manager_t *bm = &am->batch_manager;
+    ips_acl_batch_group_t *group = NULL;
+
+    /* Check if the ACL is a batch ACL */
+    if (vpp_acl_index >= vec_len(bm->vpp_acl_to_group_map))
+        return;
+
+    u32 group_id = bm->vpp_acl_to_group_map[vpp_acl_index];
+    if (group_id == ~0)
+        return;  /* Not a batch ACL */
+
+    /* Find the batch group */
+    pool_foreach(group, bm->groups)
+    {
+        if (group->group_id == group_id)
+            break;
+        group = NULL;  /* Reset if not found */
+    }
+
+    if (!group || vpp_rule_index >= vec_len(group->rules))
+        return;
+
+    /* Get the rule and update its statistics */
+    ips_acl_rule_t *rule = group->rules[vpp_rule_index];
+    if (rule && rule->enabled)
+    {
+        rule->hit_count++;
+        rule->last_hit_time = vlib_time_now(vlib_get_main());
+        group->total_hits++;
+        group->last_update_time = rule->last_hit_time;
+    }
+}
 
 /**
  * @brief Check packet against IPS ACL rules
@@ -820,6 +884,9 @@ ips_acl_check_packet(u32 thread_index, ips_session_t *session,
 
             if (match_result)
             {
+                /* Update batch rule statistics for the matched rule */
+                ips_acl_update_batch_rule_stats(am, acl_match, rule_match);
+
                 /* ACL matched - convert VPP ACL action to IPS ACL action
                  * VPP ACL plugin action encoding:
                  * - action=0 → DENY
@@ -1106,15 +1173,15 @@ ips_acl_add_session_rule(ips_acl_rule_t *rule)
         return ~0;
 
     /* Create VPP ACL rule first */
-    u32 vpp_rule_index = ips_acl_create_vpp_rule(rule);
-    if (vpp_rule_index == ~0)
+    u32 vpp_acl_index = ips_acl_create_vpp_rule(rule);
+    if (vpp_acl_index == ~0)
         return ~0;
 
     pool_get_zero(am->ips_rules, new_rule);
     clib_memcpy(new_rule, rule, sizeof(*rule));
     new_rule->rule_id = am->next_rule_id++;
-    new_rule->vpp_acl_index = 0; /* TODO: Use actual VPP ACL index */
-    new_rule->vpp_rule_index = vpp_rule_index;
+    new_rule->vpp_acl_index = vpp_acl_index; /* VPP ACL index assigned by plugin */
+    new_rule->vpp_rule_index = 0; /* Rule index within ACL (0 for single-rule ACL) */
     new_rule->hit_count = 0;
     new_rule->session_hit_count = 0;
     new_rule->last_hit_time = 0;
@@ -1138,49 +1205,33 @@ ips_acl_add_session_rule(ips_acl_rule_t *rule)
 
 /**
  * @brief Add IPS ACL rule (creates corresponding VPP ACL rule)
+ * Now uses unified batch mode: single rule = batch group with 1 rule
  */
 u32
 ips_acl_add_rule(ips_acl_rule_t *rule)
 {
-    ips_acl_manager_t *am = &ips_acl_manager;
-    ips_acl_rule_t *new_rule;
+    u32 group_id;
+    u32 acl_index;
 
     if (!rule)
         return ~0;
 
-    /* Create VPP ACL rule first */
-    u32 vpp_rule_index = ips_acl_create_vpp_rule(rule);
-    if (vpp_rule_index == ~0)
+    /* Use batch mode: create single-rule batch group */
+    if (ips_acl_add_rules_batch(rule, 1, &acl_index, &group_id) != 0)
         return ~0;
 
-    pool_get_zero(am->ips_rules, new_rule);
-    clib_memcpy(new_rule, rule, sizeof(*rule));
-    new_rule->rule_id = am->next_rule_id++;
-    new_rule->vpp_acl_index = 0; /* TODO: Use actual VPP ACL index */
-    new_rule->vpp_rule_index = vpp_rule_index;
-    new_rule->hit_count = 0;
-    new_rule->last_hit_time = 0;
-    new_rule->enabled = 1;
+    /* Return the rule ID (first rule in the batch group) */
+    ips_acl_manager_t *am = &ips_acl_manager;
+    ips_acl_batch_manager_t *bm = &am->batch_manager;
+    ips_acl_batch_group_t *group;
 
-    /* Update ACL context to include the VPP ACL */
-    for (u32 i = 0; i < am->num_threads; i++)
+    pool_foreach(group, bm->groups)
     {
-        ips_acl_context_t *ctx = &am->per_thread_contexts[i];
-        if (ctx->initialized)
-        {
-            /* Add VPP ACL to context (use vpp_rule_index, not vpp_acl_index) */
-            vec_add1(ctx->acl_list, new_rule->vpp_rule_index);
-            am->acl_methods.set_acl_vec_for_context(ctx->context_id, ctx->acl_list);
-            clib_warning("Updated lookup context %d for thread %u: added ACL %u (total: %u ACLs)",
-                        ctx->context_id, i, new_rule->vpp_rule_index, vec_len(ctx->acl_list));
-        }
+        if (group->group_id == group_id && group->rule_count > 0)
+            return group->rules[0]->rule_id;
     }
 
-    /* Apply ACL to all enabled IPS interfaces
-     * Note: This will be called from ips_acl_cli.c which has access to interface list
-     */
-
-    return new_rule->rule_id;
+    return ~0;
 }
 
 /**
@@ -1285,7 +1336,7 @@ ips_acl_apply_to_interface(u32 sw_if_index)
     {
         if (rule->enabled)
         {
-            vec_add1(acl_indices, rule->vpp_rule_index);
+            vec_add1(acl_indices, rule->vpp_acl_index);
         }
     }
     
@@ -1311,20 +1362,469 @@ ips_acl_apply_to_interface(u32 sw_if_index)
     /* Execute the command */
     unformat_input_t cli_input;
     unformat_init_vector(&cli_input, cmd);
-    
+
     int ret = vlib_cli_input(vm, &cli_input, 0, 0);
     unformat_free(&cli_input);
-    
+
     if (ret != 0)
     {
         clib_warning("Failed to apply ACLs to interface %u, error: %d", sw_if_index, ret);
         vec_free(acl_indices);
         return -1;
     }
-    
-    clib_warning("Successfully applied %u ACL rules to interface %u", 
+
+    clib_warning("Successfully applied %u ACL rules to interface %u",
                  vec_len(acl_indices), sw_if_index);
-    
+
     vec_free(acl_indices);
+    return 0;
+}
+
+/*
+ * ========================================================================
+ * Batch ACL Rule Operations for Large-Scale Rule Support
+ * ========================================================================
+ */
+
+/**
+ * @brief Convert IPS ACL rule to VPP CLI format for batch operation
+ */
+static inline u8 *
+format_acl_rule_cli(u8 *s, ips_acl_rule_t *rule)
+{
+    const char *action_str;
+
+    /* Format action */
+    switch (rule->action)
+    {
+        case IPS_ACL_ACTION_PERMIT:
+        case IPS_ACL_ACTION_LOG:
+            action_str = "permit";
+            break;
+        case IPS_ACL_ACTION_DENY:
+        case IPS_ACL_ACTION_RESET:
+        default:
+            action_str = "deny";
+            break;
+    }
+
+    /* Format: permit|deny src IP/prefix dst IP/prefix [proto] [sport] [dport] */
+    if (rule->is_ipv6)
+    {
+        s = format(s, "%s src %U/%u dst %U/%u",
+                  action_str,
+                  format_ip6_address, &rule->src_ip.ip6, rule->src_prefixlen,
+                  format_ip6_address, &rule->dst_ip.ip6, rule->dst_prefixlen);
+    }
+    else
+    {
+        s = format(s, "%s src %U/%u dst %U/%u",
+                  action_str,
+                  format_ip4_address, &rule->src_ip.ip4, rule->src_prefixlen,
+                  format_ip4_address, &rule->dst_ip.ip4, rule->dst_prefixlen);
+    }
+
+    /* Add protocol if specified */
+    if (rule->protocol != 0)
+        s = format(s, " proto %u", rule->protocol);
+
+    /* Add source port range if specified */
+    if (rule->src_port_start != 0 || rule->src_port_end != 65535)
+    {
+        if (rule->src_port_start == rule->src_port_end)
+            s = format(s, " sport %u", rule->src_port_start);
+        else
+            s = format(s, " sport %u-%u", rule->src_port_start, rule->src_port_end);
+    }
+
+    /* Add destination port range if specified */
+    if (rule->dst_port_start != 0 || rule->dst_port_end != 65535)
+    {
+        if (rule->dst_port_start == rule->dst_port_end)
+            s = format(s, " dport %u", rule->dst_port_start);
+        else
+            s = format(s, " dport %u-%u", rule->dst_port_start, rule->dst_port_end);
+    }
+
+    return s;
+}
+
+/**
+ * @brief Create a single VPP ACL containing multiple IPS ACL rules
+ * Uses VPP's batch rule feature (comma-separated rules in CLI)
+ */
+int
+ips_acl_create_vpp_acl_batch(ips_acl_rule_t *ips_rules, u32 count, u32 *acl_index)
+{
+    vlib_main_t *vm = acl_vlib_main;
+    u8 *cmd = 0;
+    int ret;
+
+    if (!vm || !ips_rules || !acl_index || count == 0)
+        return -1;
+
+    /* Build batch ACL command with comma-separated rules
+     * Format: set acl-plugin acl <rule1>, <rule2>, <rule3>, ...
+     */
+    for (u32 i = 0; i < count; i++)
+    {
+        ips_acl_rule_t *rule = &ips_rules[i];
+
+        /* Add separator before each rule except the first */
+        if (i > 0)
+            cmd = format(cmd, ", ");
+
+        /* Format the rule */
+        cmd = format_acl_rule_cli(cmd, rule);
+    }
+
+    if (vec_len(cmd) == 0)
+        return -1;
+
+    clib_warning("Creating VPP ACL with %u rules", count);
+
+    /* Execute the command via VPP CLI */
+    unformat_input_t cli_input;
+    unformat_init_vector(&cli_input, cmd);
+
+    ret = vlib_cli_input(vm, &cli_input, 0, 0);
+    unformat_free(&cli_input);
+
+    if (ret != 0)
+    {
+        clib_warning("Failed to create VPP ACL, error code: %d", ret);
+        return -1;
+    }
+
+    /* VPP assigns ACL index sequentially - return the next expected index */
+    static u32 next_acl_index = 0;
+    *acl_index = next_acl_index++;
+
+    clib_warning("VPP ACL created successfully with %u rules, index: %u", count, *acl_index);
+    return 0;
+}
+
+/**
+ * @brief Add multiple IPS ACL rules in a single VPP ACL with metadata storage
+ *
+ * @param rules Array of rule structures
+ * @param count Number of rules in the array
+ * @param acl_index Output: VPP ACL index created (optional, can be NULL)
+ * @param group_id Output: Batch group ID created (optional, can be NULL)
+ * @return 0 on success, -1 on error
+ *
+ * This function creates a batch group containing all rules, creates a single
+ * VPP ACL for all rules, and stores metadata for each rule to enable
+ * single-rule level operations (statistics, enable/disable, etc.)
+ */
+int
+ips_acl_add_rules_batch(ips_acl_rule_t *rules, u32 count, u32 *acl_index, u32 *group_id)
+{
+    ips_acl_manager_t *am = &ips_acl_manager;
+    ips_acl_batch_manager_t *bm = &am->batch_manager;
+    vlib_main_t *vm = vlib_get_main();
+    u32 vpp_acl_index;
+
+    if (!rules || count == 0)
+        return -1;
+
+    /* Create VPP ACL containing all rules */
+    if (ips_acl_create_vpp_acl_batch(rules, count, &vpp_acl_index) != 0)
+        return -1;
+
+    /* Create batch group */
+    ips_acl_batch_group_t *group;
+    pool_get_zero(bm->groups, group);
+    group->group_id = bm->next_group_id++;
+    group->vpp_acl_index = vpp_acl_index;
+    group->rule_count = count;
+    group->is_enabled = 1;
+    group->create_time = vlib_time_now(vm);
+    group->total_hits = 0;
+
+    /* Allocate rule pointers and index map */
+    vec_validate(group->rules, count - 1);
+    vec_validate(group->rule_index_map, count - 1);
+
+    /* Create metadata for each rule */
+    for (u32 i = 0; i < count; i++)
+    {
+        ips_acl_rule_t *rule_metadata;
+        pool_get_zero(am->ips_rules, rule_metadata);
+        clib_memcpy(rule_metadata, &rules[i], sizeof(ips_acl_rule_t));
+
+        rule_metadata->rule_id = am->next_rule_id++;
+        rule_metadata->batch_group_id = group->group_id;
+        rule_metadata->vpp_acl_index = vpp_acl_index;
+        rule_metadata->vpp_rule_index = i;  /* VPP ACL internal rule index */
+        rule_metadata->enabled = 1;
+
+        /* Initialize counters */
+        rule_metadata->hit_count = 0;
+        rule_metadata->session_hit_count = 0;
+        rule_metadata->last_hit_time = 0;
+
+        /* Store in batch group */
+        group->rules[i] = rule_metadata;
+        group->rule_index_map[i] = rule_metadata->rule_id;
+    }
+
+    /* Establish VPP ACL -> batch group mapping */
+    if (vpp_acl_index >= vec_len(bm->vpp_acl_to_group_map))
+    {
+        /* Expand mapping array */
+        u32 old_len = vec_len(bm->vpp_acl_to_group_map);
+        vec_resize(bm->vpp_acl_to_group_map, vpp_acl_index + 1);
+        /* Initialize new entries */
+        for (u32 i = old_len; i < vec_len(bm->vpp_acl_to_group_map); i++)
+            bm->vpp_acl_to_group_map[i] = ~0;
+    }
+    bm->vpp_acl_to_group_map[vpp_acl_index] = group->group_id;
+
+    /* Update ACL contexts for all threads */
+    for (u32 i = 0; i < am->num_threads; i++)
+    {
+        ips_acl_context_t *ctx = &am->per_thread_contexts[i];
+        if (ctx->initialized)
+        {
+            /* Add VPP ACL to context */
+            vec_add1(ctx->acl_list, vpp_acl_index);
+            am->acl_methods.set_acl_vec_for_context(ctx->context_id, ctx->acl_list);
+        }
+    }
+
+    bm->num_groups++;
+
+    /* Output parameters */
+    if (acl_index)
+        *acl_index = vpp_acl_index;
+    if (group_id)
+        *group_id = group->group_id;
+
+    clib_warning("Added %u ACL rules in VPP ACL %u (batch group %u)",
+                 count, vpp_acl_index, group->group_id);
+
+    return 0;
+}
+
+/**
+ * @brief Parse a single line from ACL rules file
+ */
+static int
+parse_acl_rule_line(const char *line, ips_acl_rule_t *rule)
+{
+    char *copy, *token, *saveptr = NULL;
+    int rv = -1;
+
+    if (!line || !rule)
+        return -1;
+
+    /* Skip empty lines and comments */
+    while (*line && isspace(*line)) line++;
+    if (*line == '\0' || *line == '#')
+        return 0;
+
+    /* Make a mutable copy */
+    copy = strdup(line);
+    if (!copy)
+        return -1;
+
+    /* Initialize rule with defaults */
+    clib_memset(rule, 0, sizeof(*rule));
+    rule->action = IPS_ACL_ACTION_PERMIT;
+    rule->src_port_start = 0;
+    rule->src_port_end = 65535;
+    rule->dst_port_start = 0;
+    rule->dst_port_end = 65535;
+    rule->protocol = 0;  /* 0 = any */
+
+    /* Parse action (permit|deny) */
+    token = strtok_r(copy, " \t\n", &saveptr);
+    if (!token)
+        goto cleanup;
+
+    if (strcmp(token, "permit") == 0 || strcmp(token, "allow") == 0)
+        rule->action = IPS_ACL_ACTION_PERMIT;
+    else if (strcmp(token, "deny") == 0 || strcmp(token, "block") == 0)
+        rule->action = IPS_ACL_ACTION_DENY;
+    else if (strcmp(token, "reset") == 0)
+        rule->action = IPS_ACL_ACTION_RESET;
+    else
+        goto cleanup;
+
+    /* Parse src IP/prefix */
+    token = strtok_r(NULL, " \t\n", &saveptr);
+    if (!token || strcmp(token, "src") != 0)
+        goto cleanup;
+
+    token = strtok_r(NULL, " \t\n", &saveptr);
+    if (!token)
+        goto cleanup;
+
+    if (strchr(token, ':'))  /* IPv6 */
+    {
+        rule->is_ipv6 = 1;
+        /* Parse IPv6 address with prefix - simpler approach using inet_pton */
+        char *slash = strchr(token, '/');
+        if (slash)
+        {
+            *slash = '\0';
+            rule->src_prefixlen = atoi(slash + 1);
+        }
+        /* Convert IPv6 string to binary format */
+        if (inet_pton(AF_INET6, token, &rule->src_ip.ip6) != 1)
+            goto cleanup;
+    }
+    else  /* IPv4 */
+    {
+        rule->is_ipv6 = 0;
+        if (sscanf(token, "%hhu.%hhu.%hhu.%hhu/%hhu",
+                   &rule->src_ip.ip4.as_u8[0], &rule->src_ip.ip4.as_u8[1],
+                   &rule->src_ip.ip4.as_u8[2], &rule->src_ip.ip4.as_u8[3],
+                   &rule->src_prefixlen) != 5)
+            goto cleanup;
+    }
+
+    /* Parse dst IP/prefix */
+    token = strtok_r(NULL, " \t\n", &saveptr);
+    if (!token || strcmp(token, "dst") != 0)
+        goto cleanup;
+
+    token = strtok_r(NULL, " \t\n", &saveptr);
+    if (!token)
+        goto cleanup;
+
+    if (strchr(token, ':'))  /* IPv6 */
+    {
+        /* Parse IPv6 address with prefix - simpler approach using inet_pton */
+        char *slash = strchr(token, '/');
+        if (slash)
+        {
+            *slash = '\0';
+            rule->dst_prefixlen = atoi(slash + 1);
+        }
+        /* Convert IPv6 string to binary format */
+        if (inet_pton(AF_INET6, token, &rule->dst_ip.ip6) != 1)
+            goto cleanup;
+    }
+    else  /* IPv4 */
+    {
+        if (sscanf(token, "%hhu.%hhu.%hhu.%hhu/%hhu",
+                   &rule->dst_ip.ip4.as_u8[0], &rule->dst_ip.ip4.as_u8[1],
+                   &rule->dst_ip.ip4.as_u8[2], &rule->dst_ip.ip4.as_u8[3],
+                   &rule->dst_prefixlen) != 5)
+            goto cleanup;
+    }
+
+    /* Parse optional fields */
+    while ((token = strtok_r(NULL, " \t\n", &saveptr)))
+    {
+        if (strcmp(token, "proto") == 0 || strcmp(token, "protocol") == 0)
+        {
+            token = strtok_r(NULL, " \t\n", &saveptr);
+            if (!token)
+                goto cleanup;
+            rule->protocol = atoi(token);
+        }
+        else if (strcmp(token, "sport") == 0)
+        {
+            token = strtok_r(NULL, " \t\n", &saveptr);
+            if (!token)
+                goto cleanup;
+            rule->src_port_start = rule->src_port_end = atoi(token);
+        }
+        else if (strcmp(token, "dport") == 0)
+        {
+            token = strtok_r(NULL, " \t\n", &saveptr);
+            if (!token)
+                goto cleanup;
+            rule->dst_port_start = rule->dst_port_end = atoi(token);
+        }
+    }
+
+    rv = 0;  /* Success */
+
+cleanup:
+    free(copy);
+    return rv;
+}
+
+/**
+ * @brief Load ACL rules from a file
+ * Supports simple text format:
+ * permit|deny src IP/prefix dst IP/prefix [proto X] [sport X] [dport X]
+ */
+int
+ips_acl_load_rules_from_file(const char *filename, u32 *acl_index, u32 *rules_loaded)
+{
+    FILE *fp;
+    char line[1024];
+    ips_acl_rule_t *rules = NULL;
+    u32 count = 0;
+
+    if (!filename || !acl_index || !rules_loaded)
+        return -1;
+
+    fp = fopen(filename, "r");
+    if (!fp)
+    {
+        clib_warning("Failed to open ACL rules file: %s", filename);
+        return -1;
+    }
+
+    clib_warning("Loading ACL rules from file: %s", filename);
+
+    /* Read and parse rules */
+    while (fgets(line, sizeof(line), fp))
+    {
+        ips_acl_rule_t rule;
+
+        /* Skip empty lines and comments */
+        int i = 0;
+        while (line[i] && isspace(line[i])) i++;
+        if (line[i] == '\0' || line[i] == '#')
+            continue;
+
+        /* Parse rule line */
+        if (parse_acl_rule_line(line, &rule) != 0)
+        {
+            clib_warning("Failed to parse rule line %u: %s", count + 1, line);
+            continue;
+        }
+
+        /* Add to rules array */
+        vec_add1(rules, rule);
+        count++;
+
+        /* Process in batches of 1000 to avoid overly long CLI commands */
+        if (count >= 1000)
+        {
+            clib_warning("Loaded batch of %u rules", count);
+            break;
+        }
+    }
+
+    fclose(fp);
+
+    if (count == 0)
+    {
+        clib_warning("No valid rules found in file: %s", filename);
+        return -1;
+    }
+
+    /* Create VPP ACL with all rules using unified batch mode */
+    u32 group_id;
+    if (ips_acl_add_rules_batch(rules, count, acl_index, &group_id) != 0)
+    {
+        vec_free(rules);
+        return -1;
+    }
+
+    vec_free(rules);
+
+    *rules_loaded = count;
+    clib_warning("Successfully loaded %u ACL rules from %s into VPP ACL %u (batch group %u)",
+                 count, filename, *acl_index, group_id);
+
     return 0;
 }

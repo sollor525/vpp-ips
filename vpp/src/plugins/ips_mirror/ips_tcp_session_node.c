@@ -85,7 +85,7 @@ ips_tcp_session_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 {
     u32 n_left_from, *from, *to_next;
     ips_tcp_session_next_t next_index;
-    u32 pkts_dropped = 0;
+    CLIB_UNUSED (u32 pkts_dropped) = 0;
     u32 thread_index = vm->thread_index;
 
     from = vlib_frame_vector_args (frame);
@@ -116,6 +116,16 @@ ips_tcp_session_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
 
             b0 = vlib_get_buffer (vm, bi0);
             sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
+
+            /* Increment basic packet counters */
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_PACKETS_RECEIVED],
+                                          thread_index,
+                                          0, /* counter index - always 0 for simple counter */
+                                          1);
+            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_BYTES_RECEIVED],
+                                          thread_index,
+                                          0, /* counter index - always 0 for simple counter */
+                                          b0->current_length);
 
             /* Process based on IP version */
             if (!is_ip6)

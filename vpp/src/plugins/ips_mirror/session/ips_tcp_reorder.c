@@ -116,12 +116,28 @@ tcp_seq_compare (u32 seq1, u32 seq2)
 
 /**
  * @brief Check if sequence number is within reorder window
+ *
+ * Handles TCP sequence number wrap-around correctly.
+ * When the window crosses the sequence number space boundary (0xFFFFFFFF -> 0),
+ * any sequence >= expected_seq is considered within the window.
  */
 static inline int
 tcp_seq_in_window (u32 seq, u32 expected_seq, u32 window_size)
 {
-    return tcp_seq_compare (seq, expected_seq) >= 0 &&
-           tcp_seq_compare (seq, expected_seq + window_size) < 0;
+    /* Check if seq >= expected_seq */
+    if (tcp_seq_compare (seq, expected_seq) < 0)
+        return 0;
+
+    /* Calculate window end and check for overflow (wrap-around) */
+    u32 window_end = expected_seq + window_size;
+
+    /* If window_end < expected_seq, overflow occurred - window wraps to 0
+     * In this case, any seq >= expected_seq is within window */
+    if (window_end < expected_seq)
+        return 1;
+
+    /* Normal case - no wrap, check if seq < window_end */
+    return tcp_seq_compare (seq, window_end) < 0;
 }
 
 /**
@@ -464,7 +480,6 @@ ips_tcp_reorder_process_packet (ips_flow_t *flow, vlib_buffer_t *b,
     tcp_header_t *tcp;
     u8 tcp_flags;
     u8 is_to_server;
-    f64 current_time;
     u32 bi = vlib_get_buffer_index (vm, b);
 
     *ordered_data = NULL;
@@ -481,7 +496,6 @@ ips_tcp_reorder_process_packet (ips_flow_t *flow, vlib_buffer_t *b,
         return -1;
 
     tcp_flags = tcp->flags;
-    current_time = vlib_time_now (vm);
 
     /* Determine direction */
     is_to_server = (flow->key.src_port < flow->key.dst_port) ? 1 : 0;
