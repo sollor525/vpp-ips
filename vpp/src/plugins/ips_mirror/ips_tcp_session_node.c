@@ -92,6 +92,17 @@ ips_tcp_session_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
     n_left_from = frame->n_vectors;
     next_index = node->cached_next_index;
 
+    /* 定期检查定时器（每 10 秒），确保低流量时也能老化会话
+     * Thread-safe 因为每个线程只处理自己的定时器和会话池 */
+    ips_session_per_thread_data_t *ptd = &ips_session_manager.per_thread_data[thread_index];
+    f64 now = vlib_time_now (vm);
+
+    if (now - ptd->last_timer_check > 10.0)
+    {
+        ips_session_timer_expire_timers (thread_index);
+        ptd->last_timer_check = now;
+    }
+
     while (n_left_from > 0)
     {
         u32 n_left_to_next;
@@ -118,14 +129,8 @@ ips_tcp_session_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
             sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
 
             /* Increment basic packet counters */
-            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_PACKETS_RECEIVED],
-                                          thread_index,
-                                          0, /* counter index - always 0 for simple counter */
-                                          1);
-            vlib_increment_simple_counter(&ips_main.counters[IPS_COUNTER_BYTES_RECEIVED],
-                                          thread_index,
-                                          0, /* counter index - always 0 for simple counter */
-                                          b0->current_length);
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PACKETS_RECEIVED, 1);
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_BYTES_RECEIVED, b0->current_length);
 
             /* Process based on IP version */
             if (!is_ip6)

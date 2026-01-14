@@ -23,7 +23,6 @@
 
 #include "ips.h"
 #include "detection/ips_detection.h" /* for foreach_ips_error */
-#include "session/ips_session_timer.h"  /* for timer expiration processing */
 
 
 
@@ -93,19 +92,6 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
     u32 pkts_dropped = 0;
     u32 thread_index = vm->thread_index;
     ips_per_thread_data_t *ptd = &im->per_thread_data[thread_index];
-
-    /* Process expired timers for this thread
-     * Each thread calls tw_timer_expire_timers on its own timer wheel.
-     * When timers expire, the callback (ips_session_timer_expire_callback)
-     * automatically deletes the sessions. This is thread-safe because each
-     * thread only touches its own data.
-     */
-    f64 now = vlib_time_now (vm);
-    ips_session_timer_process_expired_args_t timer_args = {
-        .thread_index = thread_index,
-        .now = now
-    };
-    ips_session_timer_process_expired (&timer_args);
 
     from = vlib_frame_vector_args (frame);
     n_left_from = frame->n_vectors;

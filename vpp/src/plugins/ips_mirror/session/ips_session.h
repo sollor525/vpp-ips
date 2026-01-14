@@ -135,38 +135,15 @@ typedef struct
     u32 timers_stopped;             /* 停止的定时器数量 */
     u32 timers_updated;             /* 更新的定时器数量 */
     u32 backup_scans;               /* 备用扫描次数 */
-    u32 emergency_scans;            /* 紧急扫描次数 */
     u32 timer_wheel_checks;         /* 定时器轮检查次数 */
 } ips_session_timer_stats_t;
 
 /* 会话老化统计 */
 typedef struct
 {
-    u64 syn_only_sessions;          /* 仅 SYN 会话数量 */
-    u64 syn_ack_sessions;           /* SYN+ACK 会话数量 */
-    u64 established_sessions;       /* 完整握手会话数量 */
     u64 expired_sessions;           /* 过期会话数量 */
     u64 forced_cleanup_sessions;    /* 强制清理会话数量 */
 } ips_session_aging_stats_t;
-
-/* 会话老化状态 */
-typedef struct
-{
-    f64 last_cleanup_time;          /* 上次清理时间 */
-    u32 cleanup_cursor;             /* 清理游标 */
-    u32 cleanup_batch_size;         /* 批量清理大小 */
-    u32 emergency_cleanup_count;    /* 紧急清理计数 */
-    u32 packet_driven_check_count;  /* 报文驱动检查计数 */
-} ips_session_aging_state_t;
-
-/* 会话老化阈值配置 */
-typedef struct
-{
-    u32 normal_threshold;           /* 正常老化阈值 */
-    u32 aggressive_threshold;       /* 激进老化阈值 */
-    u32 emergency_threshold;        /* 紧急老化阈值 */
-    u32 force_cleanup_target;       /* 强制清理目标数量 */
-} ips_session_aging_config_t;
 
 /* 每线程会话数据 */
 typedef struct
@@ -180,14 +157,16 @@ typedef struct
 
     /* 老化管理 */
     ips_session_aging_stats_t aging_stats;
-    ips_session_aging_state_t aging_state;
-    ips_session_aging_config_t aging_config;
+    f64 last_cleanup_time;            /* 上次清理时间（CLI 调用限频） */
 
     /* 统计信息 */
     u64 total_sessions_created;
     u64 total_sessions_deleted;
     u64 total_packets_processed;
     u64 total_bytes_processed;
+
+    /* 定时器检查状态 */
+    f64 last_timer_check;             /* 上次检查定时器的时间 */
 
 } ips_session_per_thread_data_t;
 

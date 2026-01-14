@@ -79,7 +79,6 @@ ips_show_timer_stats_command_fn (vlib_main_t * vm,
         vlib_cli_output (vm, "  Timers Stopped: %u", stats.timers_stopped);
         vlib_cli_output (vm, "  Timers Updated: %u", stats.timers_updated);
         vlib_cli_output (vm, "  Backup Scans: %u", stats.backup_scans);
-        vlib_cli_output (vm, "  Emergency Scans: %u", stats.emergency_scans);
         vlib_cli_output (vm, "  Timer Wheel Checks: %u", stats.timer_wheel_checks);
     }
 

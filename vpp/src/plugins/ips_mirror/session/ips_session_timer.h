@@ -69,7 +69,6 @@ typedef struct ips_session_timer_per_thread_
         u32 timers_stopped;                 /* Total timers stopped */
         u32 timers_updated;                 /* Total timers updated */
         u32 backup_scans;                   /* Backup scans performed */
-        u32 emergency_scans;                /* Emergency scans performed */
         u32 timer_wheel_checks;             /* Timer wheel expiration checks */
     } stats;
 
@@ -141,12 +140,6 @@ typedef struct ips_session_timer_update_args_
     u32 timeout_seconds;   /* New timeout */
 } ips_session_timer_update_args_t;
 
-typedef struct ips_session_timer_process_expired_args_
-{
-    u32 thread_index;  /* Thread index */
-    f64 now;           /* Current time */
-} ips_session_timer_process_expired_args_t;
-
 /**
  * @brief Initialize session timer manager
  */
@@ -190,13 +183,6 @@ void ips_session_timer_stop(const ips_session_timer_stop_args_t *args);
 void ips_session_timer_update(const ips_session_timer_update_args_t *args);
 
 /**
- * @brief Process expired timers
- * @param thread_index Thread index
- * @param now Current time
- */
-void ips_session_timer_process_expired(const ips_session_timer_process_expired_args_t *args);
-
-/**
  * @brief Perform backup scan for expired sessions
  * @param thread_index Thread index
  * @return Number of sessions cleaned up
@@ -211,6 +197,16 @@ u32 ips_session_timer_backup_scan(u32 thread_index);
 int ips_session_timer_needs_emergency_scan(u32 thread_index);
 
 /**
+ * @brief Expire timers for the current thread
+ *
+ * Called from packet processing nodes to check for and process expired timers.
+ * Thread-safe because each thread only processes its own timer wheel.
+ *
+ * @param thread_index Thread index (must match current thread)
+ */
+void ips_session_timer_expire_timers(u32 thread_index);
+
+/**
  * @brief Get timer statistics
  */
 void ips_session_timer_get_stats(u32 thread_index, ips_session_timer_stats_t *stats);
@@ -221,12 +217,10 @@ void ips_session_timer_get_stats(u32 thread_index, ips_session_timer_stats_t *st
 void ips_session_timer_set_config(const ips_session_timer_config_t *config);
 
 /**
- * @brief Timer expiration callback (internal)
- */
-void ips_session_timer_expire_callback(u32 *expired_timers);
-
-/**
- * @brief Timer process node function
+ * @brief Timer process node function (deprecated - use per-thread expiration)
+ *
+ * This process node is kept for compatibility but no longer processes timers.
+ * Timer expiration now happens in each worker thread during packet processing.
  */
 uword ips_session_timer_process(vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f);
 

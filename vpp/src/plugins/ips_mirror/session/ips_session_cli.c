@@ -87,17 +87,8 @@ ips_session_show_aging_command_fn (vlib_main_t * vm,
         vlib_cli_output (vm, "Thread %u:", i);
         vlib_cli_output (vm, "  Sessions expired by timers: %llu", aging_stats.expired_sessions);
         vlib_cli_output (vm, "  Sessions cleaned by force: %llu", aging_stats.forced_cleanup_sessions);
-        vlib_cli_output (vm, "  Emergency cleanup count: %u",
-                        ptd->aging_state.emergency_cleanup_count);
         vlib_cli_output (vm, "  Last cleanup time: %.3f",
-                        ptd->aging_state.last_cleanup_time);
-
-        /* 显示老化阈值 */
-        vlib_cli_output (vm, "  Aging thresholds:");
-        vlib_cli_output (vm, "    Normal: %u", ptd->aging_config.normal_threshold);
-        vlib_cli_output (vm, "    Aggressive: %u", ptd->aging_config.aggressive_threshold);
-        vlib_cli_output (vm, "    Emergency: %u", ptd->aging_config.emergency_threshold);
-        vlib_cli_output (vm, "    Force cleanup target: %u", ptd->aging_config.force_cleanup_target);
+                        ptd->last_cleanup_time);
     }
 
     return 0;

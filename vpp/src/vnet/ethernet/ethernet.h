@@ -555,10 +555,23 @@ eth_identify_subint (vnet_hw_interface_t * hi,
     goto matched;
 
   // No matching subinterface
+  // For mirror traffic (ACCEPT_ALL flag), use main interface instead of dropping
+  ethernet_interface_t *ei_tmp = ethernet_get_interface (&ethernet_main, hi->hw_if_index);
+  if (ei_tmp && (ei_tmp->flags & ETHERNET_INTERFACE_FLAG_ACCEPT_ALL))
+    {
+      // Use main interface (default_subint) for mirror traffic
+      subint = &main_intf->default_subint;
+      goto use_main_interface;
+    }
   *new_sw_if_index = ~0;
   *error0 = ETHERNET_ERROR_UNKNOWN_VLAN;
   *is_l2 = 0;
   return 0;
+
+use_main_interface:
+  *new_sw_if_index = subint->sw_if_index;
+  *is_l2 = subint->flags & SUBINT_CONFIG_L2;
+  return 1;
 
 matched:
   *new_sw_if_index = subint->sw_if_index;

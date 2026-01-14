@@ -170,3 +170,7 @@ vpp/build/external/downloads/
 *.log
 vpp/src/vpp-api/python/dist/vpp_papi-2.3.0-py3.8.egg
 vpp/src/plugins/ips_mirror/tests/
+*.tar.gz
+vpp/src/vpp-api/
+vpp-ips/
+

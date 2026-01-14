@@ -30,6 +30,9 @@
 extern vlib_node_registration_t ips_input_ip4_node;
 extern vlib_node_registration_t ips_input_ip6_node;
 
+/* Forward declaration for timer callback */
+static void ips_session_timer_expire_callback (u32 *expired_timers);
+
 /* Global timer manager instance */
 ips_session_timer_manager_t ips_session_timer_manager;
 
@@ -120,7 +123,7 @@ ips_session_timer_per_thread_init (u32 thread_index)
     /* Set configuration */
     ptt->config = tm->global_config;
 
-    /* Initialize timer wheel */
+    /* Initialize timer wheel with callback for session expiration */
     tw_timer_wheel_init_2t_1w_2048sl (&ptt->timer_wheel,
                                        ips_session_timer_expire_callback,
                                        1.0 / ptt->config.timer_wheel_ticks_per_second,
@@ -275,63 +278,6 @@ ips_session_timer_update (const ips_session_timer_update_args_t *args)
 }
 
 /**
- * @brief Process expired timers
- */
-void
-ips_session_timer_process_expired (const ips_session_timer_process_expired_args_t *args)
-{
-    ips_session_timer_manager_t *tm = &ips_session_timer_manager;
-    ips_session_timer_per_thread_t *ptt;
-
-    if (PREDICT_FALSE (!args))
-        return;
-
-    u32 thread_index = args->thread_index;
-    f64 now = args->now;
-
-    if (PREDICT_FALSE (thread_index >= tm->num_threads))
-        return;
-
-    ptt = &tm->per_thread_data[thread_index];
-
-    /* Process expired timers */
-    u32 *expired_timers = tw_timer_expire_timers_2t_1w_2048sl (&ptt->timer_wheel, now);
-
-    if (expired_timers && vec_len (expired_timers) > 0)
-    {
-        /* Process expired sessions */
-        for (u32 i = 0; i < vec_len (expired_timers); i++)
-        {
-            u32 timer_handle = expired_timers[i];
-            u32 session_index = IPS_TIMER_HANDLE_SESSION_INDEX (timer_handle);
-            u32 timer_id = IPS_TIMER_HANDLE_TIMER_ID (timer_handle);
-
-            if (timer_id == IPS_SESSION_EXPIRE_TIMER_ID)
-            {
-                /* Add to expired sessions buffer for batch processing */
-                vec_add1 (ptt->expired_sessions, session_index);
-            }
-        }
-
-        /* Batch process expired sessions */
-        if (vec_len (ptt->expired_sessions) > 0)
-        {
-            ips_session_timer_expire_callback (ptt->expired_sessions);
-            vec_reset_length (ptt->expired_sessions);
-        }
-
-        vec_free (expired_timers);
-    }
-
-    /* Update backup scan timestamp */
-    ptt->backup_state.last_timer_wheel_check = now;
-
-    /* Update statistics */
-    ptt->stats.timer_wheel_checks++;
-    tm->global_stats.total_timer_wheel_checks++;
-}
-
-/**
  * @brief Perform backup scan for expired sessions
  */
 u32
@@ -381,6 +327,103 @@ ips_session_timer_backup_scan (u32 thread_index)
 }
 
 /**
+ * @brief Timer expiration callback for the current thread
+ *
+ * Called by timer wheel when a session timer expires.
+ * This function only processes sessions owned by the current thread,
+ * following VPP's thread-per-session model for thread safety.
+ *
+ * @param expired_timers Vector of expired timer handles
+ */
+static void
+ips_session_timer_expire_callback (u32 *expired_timers)
+{
+    ips_session_manager_t *sm = &ips_session_manager;
+    ips_session_timer_manager_t *tm = &ips_session_timer_manager;
+    u32 thread_index = vlib_get_thread_index ();
+
+    if (!expired_timers || vec_len (expired_timers) == 0)
+        return;
+
+    ips_session_per_thread_data_t *ptd = &sm->per_thread_data[thread_index];
+    ips_session_timer_per_thread_t *ptt = &tm->per_thread_data[thread_index];
+
+    /* Process each expired timer */
+    for (u32 i = 0; i < vec_len (expired_timers); i++)
+    {
+        u32 timer_handle = expired_timers[i];
+        u32 session_index = IPS_TIMER_HANDLE_SESSION_INDEX (timer_handle);
+        u32 timer_id = IPS_TIMER_HANDLE_TIMER_ID (timer_handle);
+
+        if (timer_id != IPS_SESSION_EXPIRE_TIMER_ID)
+            continue;
+
+        /* Check if session index is valid */
+        if (session_index >= pool_len (ptd->session_pool))
+            continue;
+
+        if (pool_is_free_index (ptd->session_pool, session_index))
+            continue;
+
+        ips_session_t *session = pool_elt_at_index (ptd->session_pool,
+                                                    session_index);
+
+        /* Check and clear timer active flag to prevent race conditions */
+        if (!(session->flags & IPS_SESSION_FLAG_TIMER_ACTIVE))
+            continue;  /* Already processed */
+
+        /* Clear timer flags immediately - timer is already gone from wheel */
+        session->flags &= ~IPS_SESSION_FLAG_TIMER_ACTIVE;
+        session->timer_handle = IPS_TIMER_HANDLE_INVALID;
+
+        /* Update statistics */
+        ptt->stats.timers_expired++;
+        tm->global_stats.total_sessions_timed_out++;
+        ptd->aging_stats.expired_sessions++;
+
+        /* Delete the session - thread safe because we own this session */
+        ips_session_delete_no_timer (thread_index, session);
+    }
+}
+
+/**
+ * @brief Expire timers for the current thread
+ *
+ * Called from packet processing nodes to check for and process expired timers.
+ * Thread-safe because each thread only processes its own timer wheel.
+ */
+void
+ips_session_timer_expire_timers (u32 thread_index)
+{
+    ips_session_timer_manager_t *tm = &ips_session_timer_manager;
+    ips_session_timer_per_thread_t *ptt;
+
+    if (PREDICT_FALSE (thread_index >= tm->num_threads))
+        return;
+
+    ptt = &tm->per_thread_data[thread_index];
+
+    /* Get current time and convert to timer wheel ticks */
+    f64 now = vlib_time_now (vlib_get_main ());
+    now = now * ptt->config.timer_wheel_ticks_per_second;
+
+    /* Check for expired timers - callback will be invoked automatically */
+    u32 *expired_timers = tw_timer_expire_timers_2t_1w_2048sl (&ptt->timer_wheel, now);
+
+    /* Process expired timers via callback */
+    if (expired_timers && vec_len (expired_timers) > 0)
+    {
+        ips_session_timer_expire_callback (expired_timers);
+        vec_free (expired_timers);
+    }
+
+    /* Update statistics */
+    ptt->backup_state.last_timer_wheel_check = now;
+    ptt->stats.timer_wheel_checks++;
+    tm->global_stats.total_timer_wheel_checks++;
+}
+
+/**
  * @brief Check if emergency scan is needed
  */
 int
@@ -408,74 +451,6 @@ ips_session_timer_needs_emergency_scan (u32 thread_index)
 }
 
 /**
- * @brief Timer expiration callback
- */
-void
-ips_session_timer_expire_callback (u32 *expired_timers)
-{
-    if (!expired_timers)
-        return;
-
-    /* Process each expired session */
-    for (u32 i = 0; i < vec_len (expired_timers); i++)
-    {
-        u32 session_index = expired_timers[i];
-
-        /* Find which thread owns this session */
-        ips_session_manager_t *sm = &ips_session_manager;
-        ips_session_t *session = NULL;
-        u32 thread_index = ~0;
-
-        /* Search through threads to find the session */
-        u32 num_threads = vlib_num_workers();
-        for (u32 t = 0; t < num_threads; t++)
-        {
-            ips_session_per_thread_data_t *ptd = &sm->per_thread_data[t];
-            if (session_index < pool_len (ptd->session_pool) &&
-                !pool_is_free_index (ptd->session_pool, session_index))
-            {
-                session = pool_elt_at_index (ptd->session_pool, session_index);
-                thread_index = t;
-                break;
-            }
-        }
-
-        if (session && thread_index != ~0)
-        {
-            /* CRITICAL: The timer has already been removed from the timer wheel by
-             * tw_timer_expire_timers_2t_1w_2048sl before this callback is invoked.
-             * This means:
-             * 1. The timer pool entry is already freed
-             * 2. Any attempt to tw_timer_stop() will cause assertion failure
-             * 3. We MUST clear TIMER_ACTIVE flag immediately to prevent double-free
-             */
-
-            /* Atomically check and clear timer active flag to prevent race conditions */
-            if (!(session->flags & IPS_SESSION_FLAG_TIMER_ACTIVE))
-                continue;  /* Timer already processed by another path, skip */
-
-            /* FIRST: Clear timer flags IMMEDIATELY - timer is already gone from wheel */
-            session->flags &= ~IPS_SESSION_FLAG_TIMER_ACTIVE;
-            session->timer_handle = IPS_TIMER_HANDLE_INVALID;
-
-            /* Update statistics */
-            ips_session_timer_manager_t *tm = &ips_session_timer_manager;
-            ips_session_timer_per_thread_t *ptt = &tm->per_thread_data[thread_index];
-            ptt->stats.timers_expired++;
-            tm->global_stats.total_sessions_timed_out++;
-
-            /* Update session aging statistics */
-            ips_session_manager_t *sm = &ips_session_manager;
-            ips_session_per_thread_data_t *ptd = &sm->per_thread_data[thread_index];
-            ptd->aging_stats.expired_sessions++;
-
-            /* Now safe to delete session - timer flags are cleared */
-            ips_session_delete_no_timer (thread_index, session);
-        }
-    }
-}
-
-/**
  * @brief Get timer statistics
  */
 void
@@ -494,7 +469,6 @@ ips_session_timer_get_stats (u32 thread_index, ips_session_timer_stats_t *stats)
     stats->timers_stopped = ptt->stats.timers_stopped;
     stats->timers_updated = ptt->stats.timers_updated;
     stats->backup_scans = ptt->stats.backup_scans;
-    stats->emergency_scans = ptt->stats.emergency_scans;
     stats->timer_wheel_checks = ptt->stats.timer_wheel_checks;
 }
 
@@ -556,18 +530,23 @@ ips_session_timer_reset_stats (u32 thread_index)
 }
 
 /**
- * @brief Timer process - coordinator that ensures timers are processed
- * 
- * This process wakes up periodically and triggers each worker thread to
- * process its own timers. This is necessary because when there's no traffic,
- * the ips_input nodes won't be called and timers won't expire.
- * 
- * IMPORTANT: This process does NOT access session data directly. It only
- * sends signals to worker threads to process their own timers, maintaining
- * thread safety.
+ * @brief Timer process - backup timer expiration for main thread
+ *
+ * This process runs on the main thread and handles timer expiration for two cases:
+ * 1. Sessions owned by the main thread (thread 0)
+ * 2. Backup expiration when there's no traffic on worker threads
+ *
+ * NOTE: With the new per-thread timer expiration model, worker threads
+ * check their own timers during packet processing. This process node only
+ * handles the main thread's timers to ensure sessions expire even when
+ * there's no traffic on the main thread.
+ *
+ * For worker threads without traffic, timers will expire when they
+ * eventually receive packets, or through the backup scan mechanism.
  */
 uword
-ips_session_timer_process (vlib_main_t * vm, vlib_node_runtime_t * __clib_unused rt,
+ips_session_timer_process (vlib_main_t * vm,
+                          vlib_node_runtime_t * __clib_unused rt,
                           vlib_frame_t * __clib_unused f)
 {
     ips_session_timer_manager_t *tm = &ips_session_timer_manager;
@@ -580,25 +559,32 @@ ips_session_timer_process (vlib_main_t * vm, vlib_node_runtime_t * __clib_unused
     {
         vlib_process_wait_for_event_or_clock (vm, timeout);
         now = vlib_time_now (vm);
+        /* Convert seconds to timer wheel ticks for accurate expiration checking
+         * The timer wheel uses ticks (100 ticks/second by default), not seconds */
+        now = now * tm->global_config.timer_wheel_ticks_per_second;
         event_type = vlib_process_get_events (vm, (uword **) &event_data);
 
-        /* Process expired timers for all threads
-         * IMPORTANT: ips_session_timer_process_expired() is designed to be thread-safe.
-         * It only accesses per-thread data via thread_index, and tw_timer_expire_timers
-         * is designed to be called from any context (it's the timer wheel's internal state).
-         * 
-         * The key is that each thread's timer wheel and session pool are independent,
-         * and we're just calling the timer wheel's expire function which triggers callbacks.
-         * The callbacks (ips_session_timer_expire_callback) handle session deletion safely.
-         */
-        for (u32 i = 0; i < tm->num_threads; i++)
+        /* Only process main thread (thread 0) timers
+         * Worker threads handle their own timers during packet processing */
+        ips_session_timer_per_thread_t *ptt = &tm->per_thread_data[0];
+
+        /* Get expired timers from the main thread's wheel */
+        u32 *expired_timers = tw_timer_expire_timers_2t_1w_2048sl (&ptt->timer_wheel, now);
+
+        /* Invoke callback to process expired timers
+         * The callback only handles thread 0's sessions */
+        if (expired_timers && vec_len (expired_timers) > 0)
         {
-            ips_session_timer_process_expired_args_t args = {
-                .thread_index = i,
-                .now = now
-            };
-            ips_session_timer_process_expired (&args);
+            ips_session_timer_expire_callback (expired_timers);
+            vec_free (expired_timers);
         }
+
+        /* Update backup scan timestamp */
+        ptt->backup_state.last_timer_wheel_check = now;
+
+        /* Update statistics */
+        ptt->stats.timer_wheel_checks++;
+        tm->global_stats.total_timer_wheel_checks++;
 
         vec_reset_length (event_data);
     }

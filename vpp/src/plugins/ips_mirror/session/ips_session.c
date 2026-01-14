@@ -43,11 +43,6 @@ static int ips_session_check_acl(u32 thread_index, ips_session_t *session,
 #define IPS_SESSION_DEFAULT_AGING_CHECK_INTERVAL    1   /* 1秒 */
 #define IPS_SESSION_DEFAULT_AGING_BATCH_SIZE        100
 
-/* 老化阈值百分比 */
-#define IPS_SESSION_NORMAL_THRESHOLD_PCT        70
-#define IPS_SESSION_AGGRESSIVE_THRESHOLD_PCT    85
-#define IPS_SESSION_EMERGENCY_THRESHOLD_PCT     95
-
 /**
  * @brief 初始化会话管理器
  */
@@ -155,21 +150,11 @@ ips_session_per_thread_init (u32 thread_index)
     clib_bihash_init_48_8 (&ptd->ipv6_session_hash, "ips-session-ipv6",
                            sm->ipv6_hash_buckets, sm->ipv6_hash_memory_size);
 
-    /* 初始化老化配置 */
-    ptd->aging_config.normal_threshold =
-        (sm->session_pool_size * IPS_SESSION_NORMAL_THRESHOLD_PCT) / 100;
-    ptd->aging_config.aggressive_threshold =
-        (sm->session_pool_size * IPS_SESSION_AGGRESSIVE_THRESHOLD_PCT) / 100;
-    ptd->aging_config.emergency_threshold =
-        (sm->session_pool_size * IPS_SESSION_EMERGENCY_THRESHOLD_PCT) / 100;
-    ptd->aging_config.force_cleanup_target = sm->session_pool_size / 10; /* 10% */
-
     /* 初始化老化状态 */
-    ptd->aging_state.last_cleanup_time = vlib_time_now (vlib_get_main ());
-    ptd->aging_state.cleanup_cursor = 0;
-    ptd->aging_state.cleanup_batch_size = sm->aging_batch_size;
-    ptd->aging_state.emergency_cleanup_count = 0;
-    ptd->aging_state.packet_driven_check_count = 0;
+    ptd->last_cleanup_time = vlib_time_now (vlib_get_main ());
+
+    /* 初始化定时器检查时间戳 */
+    ptd->last_timer_check = vlib_time_now (vlib_get_main ());
 
     return 0;
 }
@@ -491,7 +476,7 @@ create_new_session:
     if (pool_elts (ptd->session_pool) >= sm->session_pool_size)
     {
         /* 尝试强制清理过期会话，增加清理目标 */
-        u32 cleanup_target = ptd->aging_config.force_cleanup_target * 2;
+        u32 cleanup_target = sm->session_pool_size / 5; /* 20% */
         ips_session_force_cleanup_args_t fc_args_1 = { .thread_index = thread_index, .target_count = cleanup_target };
         ips_session_force_cleanup (&fc_args_1);
 
@@ -828,7 +813,7 @@ create_new_session_v6:
     if (pool_elts (ptd->session_pool) >= sm->session_pool_size)
     {
         /* 尝试强制清理过期会话，增加清理目标 */
-        u32 cleanup_target = ptd->aging_config.force_cleanup_target * 2;
+        u32 cleanup_target = sm->session_pool_size / 5; /* 20% */
         ips_session_force_cleanup_args_t fc_args_2 = { .thread_index = thread_index, .target_count = cleanup_target };
         ips_session_force_cleanup (&fc_args_2);
 
@@ -1104,7 +1089,10 @@ ips_session_delete_no_timer (u32 thread_index, ips_session_t * session)
 }
 
 /**
- * @brief 会话老化处理
+ * @brief 会话老化处理（CLI 手动调用）
+ *
+ * 简化版本：直接清理所有过期会话，不使用复杂的阈值逻辑
+ * CLI 手动调用时，用户期望立即清理所有过期会话
  */
 void
 ips_session_aging_process (u32 thread_index)
@@ -1116,55 +1104,12 @@ ips_session_aging_process (u32 thread_index)
         return;
 
     ips_session_per_thread_data_t *ptd = &sm->per_thread_data[thread_index];
-    ips_session_aging_state_t *aging_state = &ptd->aging_state;
     f64 now = vlib_time_now (vlib_get_main ());
     u32 pool_size = pool_len (ptd->session_pool);
-    u32 active_sessions = pool_elts (ptd->session_pool);
 
-    /* 检查是否需要执行老化 */
-    if ((now - aging_state->last_cleanup_time) < sm->aging_check_interval)
+    /* 直接清理所有过期会话 */
+    for (u32 cursor = 0; cursor < pool_size; cursor++)
     {
-        return;
-    }
-
-    aging_state->last_cleanup_time = now;
-
-    /* 根据会话数量决定老化策略 */
-    u32 cleanup_count = 0;
-    if (active_sessions > ptd->aging_config.emergency_threshold)
-    {
-        /* 紧急老化：清理更多会话 */
-        cleanup_count = aging_state->cleanup_batch_size * 4;
-        aging_state->emergency_cleanup_count++;
-    }
-    else if (active_sessions > ptd->aging_config.aggressive_threshold)
-    {
-        /* 激进老化：清理更多会话 */
-        cleanup_count = aging_state->cleanup_batch_size * 2;
-    }
-    else if (active_sessions > ptd->aging_config.normal_threshold)
-    {
-        /* 正常老化 */
-        cleanup_count = aging_state->cleanup_batch_size;
-    }
-    else
-    {
-        /* 会话数量正常，不需要老化 */
-        return;
-    }
-
-    /* 执行批量老化 */
-    u32 cursor = aging_state->cleanup_cursor;
-    u32 cleaned = 0;
-    u32 checked = 0;
-
-    while (cleaned < cleanup_count && checked < pool_size)
-    {
-        if (cursor >= pool_size)
-        {
-            cursor = 0;
-        }
-
         if (!pool_is_free_index (ptd->session_pool, cursor))
         {
             ips_session_t *session = pool_elt_at_index (ptd->session_pool, cursor);
@@ -1176,18 +1121,13 @@ ips_session_aging_process (u32 thread_index)
                 session->tcp_state_dst == IPS_SESSION_STATE_CLOSED)
             {
                 ips_session_delete (thread_index, session);
-                cleaned++;
-
-                /* 更新统计 */
                 ptd->aging_stats.expired_sessions++;
             }
         }
-
-        cursor++;
-        checked++;
     }
 
-    aging_state->cleanup_cursor = cursor;
+    /* 更新清理时间（用于限制 CLI 调用频率） */
+    ptd->last_cleanup_time = now;
 }
 
 /**

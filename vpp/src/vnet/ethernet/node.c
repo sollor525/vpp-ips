@@ -742,6 +742,16 @@ eth_input_process_frame_dmac_check (vnet_hw_interface_t * hi,
 				    u32 n_packets, ethernet_interface_t * ei,
 				    u8 have_sec_dmac)
 {
+  /* Skip MAC address check if ACCEPT_ALL flag is set (for mirror traffic) */
+  if (ei && (ei->flags & ETHERNET_INTERFACE_FLAG_ACCEPT_ALL))
+    {
+      for (i32 i = 0; i < n_packets; i++)
+        {
+          dmacs_bad[i] = 0;
+        }
+      return;
+    }
+
   u64 hwaddr = ei->address.as_u64;
   u64 *dmac = dmacs;
   u8 *dmac_bad = dmacs_bad;
@@ -1356,7 +1366,7 @@ ethernet_input_inline (vlib_main_t * vm,
 		}
 	      else
 		{
-		  if (ei && (ei->flags & ETHERNET_INTERFACE_FLAG_STATUS_L3))
+		  if (ei && (ei->flags & (ETHERNET_INTERFACE_FLAG_STATUS_L3 | ETHERNET_INTERFACE_FLAG_ACCEPT_ALL)))
 		    goto skip_dmac_check01;
 
 		  dmacs[0] = *(u64 *) e0;
@@ -1600,7 +1610,7 @@ ethernet_input_inline (vlib_main_t * vm,
 		}
 	      else
 		{
-		  if (ei && ei->flags & ETHERNET_INTERFACE_FLAG_STATUS_L3)
+		  if (ei && ei->flags & (ETHERNET_INTERFACE_FLAG_STATUS_L3 | ETHERNET_INTERFACE_FLAG_ACCEPT_ALL))
 		    goto skip_dmac_check0;
 
 		  dmacs[0] = *(u64 *) e0;

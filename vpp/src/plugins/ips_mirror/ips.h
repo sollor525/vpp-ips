@@ -745,7 +745,7 @@ typedef struct
     u16 msg_id_base;
 
     /* Simple counters for all nodes - compatible with vlib_increment_simple_counter */
-    vlib_simple_counter_main_t *counters;
+    vlib_simple_counter_main_t counters;
 
     /* Per-thread data */
     ips_per_thread_data_t *per_thread_data;

@@ -60,14 +60,11 @@ ips_init (vlib_main_t *vm)
   vec_validate_aligned (im->per_thread_data, vlib_num_workers (),
 			CLIB_CACHE_LINE_BYTES);
 
-  /* Initialize simple counters for vlib_increment_simple_counter */
-  u32 num_threads = vlib_num_workers () + 1;  /* Include main thread */
-  vec_validate_aligned (im->counters, num_threads,
-                       CLIB_CACHE_LINE_BYTES);
-  for (u32 i = 0; i < num_threads; i++)
+  /* Initialize simple counters for vlib_increment_simple_counter
+   * Use vlib_validate_simple_counter to properly initialize per-thread counters */
+  for (u32 i = 0; i < IPS_COUNTER_MAX; i++)
   {
-    vec_validate_aligned (im->counters[i].counters, IPS_COUNTER_MAX,
-                         CLIB_CACHE_LINE_BYTES);
+    vlib_validate_simple_counter (&im->counters, i);
   }
 
   /* Initialize rule storage */
@@ -114,6 +111,7 @@ ips_init (vlib_main_t *vm)
   if (error)
     return error;
 
+#if 0
   /* Enable session timer process node
    * This process periodically wakes up worker threads to process their timers.
    * It does NOT access session data directly - it only sends interrupt signals
@@ -122,6 +120,7 @@ ips_init (vlib_main_t *vm)
    */
   vlib_node_set_state (vm, ips_session_timer_process_node.index,
                        VLIB_NODE_STATE_POLLING);
+#endif
 
   return 0;
 }
