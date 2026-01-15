@@ -129,8 +129,8 @@ ips_tcp_session_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
             sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
 
             /* Increment basic packet counters */
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PACKETS_RECEIVED, 1);
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_BYTES_RECEIVED, b0->current_length);
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_SESSION_PACKETS_SEEN, 1);
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_SESSION_BYTES_SEEN, b0->current_length);
 
             /* Process based on IP version */
             if (!is_ip6)

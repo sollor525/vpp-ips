@@ -269,32 +269,25 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
 
     /* Increment counters for the entire frame */
     if (frame->n_vectors > 0) {
-        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PACKETS_RECEIVED,
+        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PROTO_DETECT_PACKETS_IN,
                                       frame->n_vectors);
 
-        /* Calculate total bytes - use original frame pointer */
-        u32 *original_from = vlib_frame_vector_args (frame);
-        if (frame->n_vectors > 0) {
-            u32 first_bi = original_from[0];
-            vlib_buffer_t *first_b = vlib_get_buffer(vm, first_bi);
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_BYTES_RECEIVED,
-                                          first_b->current_length * frame->n_vectors);
-        }
+        /* Note: Bytes are counted in input node - not counted here */
 
-        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PROTOCOL_DETECTION_PROCESSED,
+        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PROTO_DETECT_PROCESSED,
                                       frame->n_vectors);
 
         /* Increment protocol detection specific counters */
         if (detection_attempts_count > 0) {
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PROTOCOL_DETECTION_ATTEMPTS,
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PROTO_DETECT_ATTEMPTS,
                                           detection_attempts_count);
         }
         if (detection_success_count > 0) {
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PROTOCOL_DETECTION_SUCCESS,
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PROTO_DETECT_SUCCESS,
                                           detection_success_count);
         }
         if (insufficient_data_count > 0) {
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PROTOCOL_INSUFFICIENT_DATA,
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PROTO_DETECT_INSUFFICIENT_DATA,
                                           insufficient_data_count);
         }
         if (sessions_not_found_count > 0) {
@@ -302,7 +295,7 @@ ips_protocol_detect_node_fn (vlib_main_t *vm,
                                           sessions_not_found_count);
         }
         if (no_payload_count > 0) {
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PROTOCOL_NO_PAYLOAD,
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PROTO_DETECT_NO_PAYLOAD,
                                           no_payload_count);
         }
 

@@ -173,4 +173,4 @@ vpp/src/plugins/ips_mirror/tests/
 *.tar.gz
 vpp/src/vpp-api/
 vpp-ips/
-
+*.pcap

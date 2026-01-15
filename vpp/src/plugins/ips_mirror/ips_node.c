@@ -121,32 +121,53 @@ ips_input_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
             b0 = vlib_get_buffer (vm, bi0);
             sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
 
+            /* Update input node counters */
+            u32 bi0_len = b0->current_length;
+            vlib_increment_simple_counter (&im->counters, thread_index,
+                                          IPS_COUNTER_INPUT_PACKETS, 1);
+            vlib_increment_simple_counter (&im->counters, thread_index,
+                                          IPS_COUNTER_INPUT_BYTES, bi0_len);
+
             /* Simplified packet handling - route to appropriate nodes */
             if (!is_ip6)
             {
                 ip4_header_t *ip4h = vlib_buffer_get_current (b0);
+                vlib_increment_simple_counter (&im->counters, thread_index,
+                                              IPS_COUNTER_INPUT_IPV4_PACKETS, 1);
+
                 if (PREDICT_TRUE (ip4h->protocol == IP_PROTOCOL_TCP))
                 {
                     /* TCP packet - send to TCP session node for processing */
+                    vlib_increment_simple_counter (&im->counters, thread_index,
+                                                  IPS_COUNTER_INPUT_TCP_PACKETS, 1);
                     next0 = IPS_INPUT_NEXT_TCP_SESSION;
                 }
                 else
                 {
                     /* Non-TCP packet - drop for mirror traffic */
+                    vlib_increment_simple_counter (&im->counters, thread_index,
+                                                  IPS_COUNTER_INPUT_NON_TCP_DROPPED, 1);
                     next0 = IPS_INPUT_NEXT_DROP;
                 }
             }
             else
             {
                 ip6_header_t *ip6h = vlib_buffer_get_current (b0);
+                vlib_increment_simple_counter (&im->counters, thread_index,
+                                              IPS_COUNTER_INPUT_IPV6_PACKETS, 1);
+
                 if (PREDICT_TRUE (ip6h->protocol == IP_PROTOCOL_TCP))
                 {
                     /* TCP packet - send to TCP session node for processing */
+                    vlib_increment_simple_counter (&im->counters, thread_index,
+                                                  IPS_COUNTER_INPUT_TCP_PACKETS, 1);
                     next0 = IPS_INPUT_NEXT_TCP_SESSION;
                 }
                 else
                 {
                     /* Non-TCP packet - drop for mirror traffic */
+                    vlib_increment_simple_counter (&im->counters, thread_index,
+                                                  IPS_COUNTER_INPUT_NON_TCP_DROPPED, 1);
                     next0 = IPS_INPUT_NEXT_DROP;
                 }
             }

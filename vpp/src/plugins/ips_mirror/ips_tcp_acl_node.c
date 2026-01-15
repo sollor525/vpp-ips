@@ -127,6 +127,9 @@ ips_tcp_acl_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
             b0 = vlib_get_buffer (vm, bi0);
             sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
 
+            /* Increment processed counter */
+            pkts_processed++;
+
             /* Get session information from previous node */
             session_index = vnet_buffer (b0)->unused[0];
             src_port = vnet_buffer (b0)->unused[1];
@@ -370,6 +373,17 @@ ips_tcp_acl_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
         }
 
         vlib_put_next_frame (vm, node, next_index, n_left_to_next);
+    }
+
+    /* Update simple counters for ACL statistics */
+    if (pkts_processed > 0) {
+        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_ACL_CHECKS, pkts_processed);
+    }
+    if (pkts_permitted > 0) {
+        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_ACL_PERMITS, pkts_permitted);
+    }
+    if (pkts_blocked > 0) {
+        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_ACL_DENIES, pkts_blocked);
     }
 
     /* TCP ACL statistics are tracked internally */

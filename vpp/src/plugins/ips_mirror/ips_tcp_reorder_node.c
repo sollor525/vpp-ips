@@ -127,9 +127,8 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
             sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
 
             /* Increment basic packet counters */
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PACKETS_RECEIVED, 1);
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_BYTES_RECEIVED, b0->current_length);
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_TCP_REORDER_PROCESSED, 1);
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_REORDER_PACKETS_IN, 1);
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_REORDER_PROCESSED, 1);
 
             /* Get session information from previous node */
             session_index = vnet_buffer (b0)->unused[0];
@@ -184,7 +183,7 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                         pkts_reordered++;  /* Count as processed for stats */
 
                         /* Increment reorder bypass counter */
-                        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_TCP_REORDER_BYPASSED, 1);
+                        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_REORDER_BYPASSED, 1);
 
                         IPS_LOG(IPS_LOG_LEVEL_DEBUG,
                                "TCP reordering bypassed for session %u, forwarding directly",
@@ -205,8 +204,7 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                     /* Non-TCP packet - drop (mirror traffic) */
                     next0 = IPS_TCP_REORDER_NEXT_DROP;
 
-                    /* Increment non-TCP drop counter */
-                    vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_NON_TCP_DROPPED, 1);
+                    /* Note: Non-TCP drops are counted in input node */
                 }
             }
             else
@@ -252,7 +250,7 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                         pkts_reordered++;  /* Count as processed for stats */
 
                         /* Increment reorder bypass counter */
-                        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_TCP_REORDER_BYPASSED, 1);
+                        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_REORDER_BYPASSED, 1);
 
                         IPS_LOG(IPS_LOG_LEVEL_DEBUG,
                                "TCP reordering bypassed for session %u, forwarding directly",
@@ -273,8 +271,7 @@ ips_tcp_reorder_node_inline (vlib_main_t * vm, vlib_node_runtime_t * node,
                     /* Non-TCP packet - drop (mirror traffic) */
                     next0 = IPS_TCP_REORDER_NEXT_DROP;
 
-                    /* Increment non-TCP drop counter */
-                    vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_NON_TCP_DROPPED, 1);
+                    /* Note: Non-TCP drops are counted in input node */
                 }
             }
 

@@ -112,10 +112,146 @@ ips_show_stats_command (vlib_main_t * __clib_unused vm,
     return 0;
 }
 
+/**
+ * @brief Show IPS node counters (simple counters)
+ */
+static clib_error_t *
+ips_show_counters_command (vlib_main_t * vm,
+                          unformat_input_t * __clib_unused input,
+                          vlib_cli_command_t * __clib_unused cmd)
+{
+    ips_main_t *im = &ips_main;
+
+    /* Display aggregated counters */
+    vlib_cli_output (vm, "IPS Simple Counters:");
+    vlib_cli_output (vm, "====================");
+
+    /* Input Node Counters */
+    vlib_cli_output (vm, "\nInput Node:");
+    vlib_cli_output (vm, "  Packets In: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INPUT_PACKETS));
+    vlib_cli_output (vm, "  Bytes In: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INPUT_BYTES));
+    vlib_cli_output (vm, "  IPv4 Packets: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INPUT_IPV4_PACKETS));
+    vlib_cli_output (vm, "  IPv6 Packets: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INPUT_IPV6_PACKETS));
+    vlib_cli_output (vm, "  TCP Packets: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INPUT_TCP_PACKETS));
+    vlib_cli_output (vm, "  UDP Packets: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INPUT_UDP_PACKETS));
+    vlib_cli_output (vm, "  Other Protocols: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INPUT_OTHER_PROTOCOLS));
+    vlib_cli_output (vm, "  Non-TCP Dropped: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INPUT_NON_TCP_DROPPED));
+
+    /* Session Node Counters */
+    vlib_cli_output (vm, "\nSession Node:");
+    vlib_cli_output (vm, "  Packets Seen: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_SESSION_PACKETS_SEEN));
+    vlib_cli_output (vm, "  Packets Processed: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_SESSION_PACKETS_PROCESSED));
+    vlib_cli_output (vm, "  Bytes Seen: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_SESSION_BYTES_SEEN));
+    vlib_cli_output (vm, "  Bytes Processed: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_SESSION_BYTES_PROCESSED));
+    vlib_cli_output (vm, "  Sessions Created: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_SESSIONS_CREATED));
+    vlib_cli_output (vm, "  Sessions Lookup Hit: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_SESSIONS_LOOKUP_HIT));
+    vlib_cli_output (vm, "  Sessions Lookup Miss: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_SESSIONS_LOOKUP_MISS));
+    vlib_cli_output (vm, "  Sessions Timeout: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_SESSIONS_TIMEOUT));
+    vlib_cli_output (vm, "  Sessions Expired: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_SESSIONS_EXPIRED));
+    vlib_cli_output (vm, "  Session State Transitions: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_SESSION_STATE_TRANSITIONS));
+    vlib_cli_output (vm, "  Session Not Found: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_SESSION_NOT_FOUND));
+
+    /* Reorder Node Counters */
+    vlib_cli_output (vm, "\nReorder Node:");
+    vlib_cli_output (vm, "  Packets In: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_REORDER_PACKETS_IN));
+    vlib_cli_output (vm, "  Processed: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_REORDER_PROCESSED));
+    vlib_cli_output (vm, "  In Order: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_REORDER_IN_ORDER));
+    vlib_cli_output (vm, "  Out Of Order: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_REORDER_OUT_OF_ORDER));
+    vlib_cli_output (vm, "  Bypassed: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_REORDER_BYPASSED));
+    vlib_cli_output (vm, "  Buffered: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_REORDER_BUFFERED));
+    vlib_cli_output (vm, "  Reassembled: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_REORDER_REASSEMBLED));
+    vlib_cli_output (vm, "  Buffer Overflow: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_REORDER_BUFFER_OVERFLOW));
+    vlib_cli_output (vm, "  Timeouts: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_REORDER_TIMEOUTS));
+    vlib_cli_output (vm, "  Failed: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_REORDER_FAILED));
+
+    /* Protocol Detection Node Counters */
+    vlib_cli_output (vm, "\nProtocol Detection:");
+    vlib_cli_output (vm, "  Packets In: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_DETECT_PACKETS_IN));
+    vlib_cli_output (vm, "  Processed: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_DETECT_PROCESSED));
+    vlib_cli_output (vm, "  Attempts: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_DETECT_ATTEMPTS));
+    vlib_cli_output (vm, "  Success: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_DETECT_SUCCESS));
+    vlib_cli_output (vm, "  Insufficient Data: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_DETECT_INSUFFICIENT_DATA));
+    vlib_cli_output (vm, "  No Payload: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_DETECT_NO_PAYLOAD));
+    vlib_cli_output (vm, "  HTTP: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_HTTP));
+    vlib_cli_output (vm, "  HTTPS: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_HTTPS));
+    vlib_cli_output (vm, "  TLS: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_TLS));
+    vlib_cli_output (vm, "  SSH: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_SSH));
+    vlib_cli_output (vm, "  DNS: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_DNS));
+    vlib_cli_output (vm, "  FTP: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_FTP));
+    vlib_cli_output (vm, "  Unknown: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_UNKNOWN));
+    vlib_cli_output (vm, "  Detection Failed: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_PROTO_DETECTION_FAILED));
+
+    /* Inspection Node Counters */
+    vlib_cli_output (vm, "\nInspection:");
+    vlib_cli_output (vm, "  Packets In: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_PACKETS_IN));
+    vlib_cli_output (vm, "  Processed: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_PROCESSED));
+    vlib_cli_output (vm, "  Performed: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_PERFORMED));
+    vlib_cli_output (vm, "  Bytes Scanned: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_BYTES_SCANNED));
+    vlib_cli_output (vm, "  Pattern Matches: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_PATTERN_MATCHES));
+    vlib_cli_output (vm, "  Hyperscan Calls: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_HYPERSCAN_CALLS));
+    vlib_cli_output (vm, "  PCRE Calls: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_PCRE_CALLS));
+    vlib_cli_output (vm, "  Rule Matches: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_RULE_MATCHES));
+    vlib_cli_output (vm, "  Rules Triggered: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_RULES_TRIGGERED));
+    vlib_cli_output (vm, "  Alerts Generated: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_ALERTS_GENERATED));
+    vlib_cli_output (vm, "  Packets Passed: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_PACKETS_PASSED));
+    vlib_cli_output (vm, "  Packets Dropped: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_PACKETS_DROPPED));
+    vlib_cli_output (vm, "  Errors: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_ERRORS));
+    vlib_cli_output (vm, "  Session Not Found: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_INSPECT_SESSION_NOT_FOUND));
+
+    /* Block Node Counters */
+    vlib_cli_output (vm, "\nBlocking:");
+    vlib_cli_output (vm, "  Packets In: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_BLOCK_PACKETS_IN));
+    vlib_cli_output (vm, "  Sent: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_BLOCK_SENT));
+    vlib_cli_output (vm, "  TCP Resets Sent: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_BLOCK_TCP_RESETS_SENT));
+    vlib_cli_output (vm, "  Errors: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_BLOCK_ERRORS));
+    vlib_cli_output (vm, "  Already Blocked: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_BLOCK_ALREADY_BLOCKED));
+    vlib_cli_output (vm, "  Non-TCP Dropped: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_BLOCK_NON_TCP_DROPPED));
+
+    /* ACL Node Counters */
+    vlib_cli_output (vm, "\nACL:");
+    vlib_cli_output (vm, "  Checks: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_ACL_CHECKS));
+    vlib_cli_output (vm, "  Permits: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_ACL_PERMITS));
+    vlib_cli_output (vm, "  Denies: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_ACL_DENIES));
+    vlib_cli_output (vm, "  Resets: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_ACL_RESETS));
+    vlib_cli_output (vm, "  Sessions Blocked: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_ACL_SESSIONS_BLOCKED));
+    vlib_cli_output (vm, "  Sessions Existing Blocked: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_ACL_SESSIONS_EXISTING_BLOCKED));
+    vlib_cli_output (vm, "  VPP Hits: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_ACL_VPP_HITS));
+    vlib_cli_output (vm, "  VPP Permit Hits: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_ACL_VPP_PERMIT_HITS));
+    vlib_cli_output (vm, "  VPP Deny Hits: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_ACL_VPP_DENY_HITS));
+    vlib_cli_output (vm, "  Unknown Actions: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_ACL_UNKNOWN_ACTIONS));
+
+    /* Logging Counters */
+    vlib_cli_output (vm, "\nLogging:");
+    vlib_cli_output (vm, "  Entries Generated: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_LOG_ENTRIES_GENERATED));
+    vlib_cli_output (vm, "  ACL Hits: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_LOG_ACL_HITS));
+    vlib_cli_output (vm, "  IDS Matches: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_LOG_IDS_MATCHES));
+    vlib_cli_output (vm, "  Buffer Full: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_LOG_BUFFER_FULL));
+    vlib_cli_output (vm, "  Write Errors: %llu", vlib_get_simple_counter (&im->counters, IPS_COUNTER_LOG_WRITE_ERRORS));
+
+    /* Per-Thread Breakdown */
+    u32 num_threads = vec_len (im->counters.counters);
+    vlib_cli_output (vm, "\nPer-Thread Breakdown:");
+    for (u32 thread_index = 0; thread_index < num_threads; thread_index++)
+    {
+        vlib_cli_output (vm, "  Thread %u:", thread_index);
+        vlib_cli_output (vm, "    Input Packets: %llu", im->counters.counters[thread_index][IPS_COUNTER_INPUT_PACKETS]);
+        vlib_cli_output (vm, "    Sessions Created: %llu", im->counters.counters[thread_index][IPS_COUNTER_SESSIONS_CREATED]);
+        vlib_cli_output (vm, "    Rule Matches: %llu", im->counters.counters[thread_index][IPS_COUNTER_INSPECT_RULE_MATCHES]);
+    }
+
+    return 0;
+}
+
 VLIB_CLI_COMMAND (ips_show_stats_cmd, static) = {
     .path = "show ips stats",
     .short_help = "show ips stats",
     .function = ips_show_stats_command,
+};
+
+VLIB_CLI_COMMAND (ips_show_counters_cmd, static) = {
+    .path = "show ips counters",
+    .short_help = "show ips node counters (simple counters)",
+    .function = ips_show_counters_command,
 };
 
 /* Function moved to suricata_cli.c to avoid duplication */

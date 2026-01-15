@@ -50,6 +50,25 @@ dpdk_config_main_t dpdk_config_main;
 
 #define LINK_STATE_ELOGS	0
 
+/* Symmetric RSS hash keys for Intel NICs */
+static const u8 intel_rss_key_40[40] = {
+  0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+  0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+  0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+  0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+  0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A
+};
+
+static const u8 intel_rss_key_52[52] = {
+  0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a,
+  0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a,
+  0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a,
+  0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a,
+  0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a,
+  0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a, 0x6d, 0x5a,
+  0x6d, 0x5a, 0x6d, 0x5a
+};
+
 /* dev_info.speed_capa -> interface name mapppings */
 const struct
 {
@@ -293,6 +312,64 @@ dpdk_counters_xstats_init (dpdk_device_t *xd)
 		    xd->port_id, ret);
     }
   vec_free (xstats_names);
+}
+
+static inline int
+dpdk_device_is_intel_nic (dpdk_device_t *xd)
+{
+  if (!xd->driver)
+    return 0;
+
+  dpdk_driver_name_t *dn = xd->driver->drivers;
+  while (dn->name)
+    {
+      /* Intel NIC drivers */
+      if (!strcmp (dn->name, "net_e1000_igb") ||   /* i210/i350 */
+	  !strcmp (dn->name, "net_e1000_em") ||    /* 82540EM */
+	  !strcmp (dn->name, "net_ixgbe") ||       /* 82599 */
+	  !strcmp (dn->name, "net_i40e") ||        /* x710 */
+	  !strcmp (dn->name, "net_ice") ||         /* E810 */
+	  !strcmp (dn->name, "net_igc"))           /* I225 */
+	return 1;
+      dn++;
+    }
+  return 0;
+}
+
+static void
+dpdk_setup_symmetric_rss_key (dpdk_device_t *xd, struct rte_eth_dev_info *di)
+{
+  /* Only apply symmetric RSS to Intel NICs */
+  if (!dpdk_device_is_intel_nic (xd))
+    return;
+
+  /* Free existing RSS key if present (prevents memory leak on reconfigure) */
+  if (xd->rss_key)
+    vec_free (xd->rss_key);
+
+  /* Determine key size based on driver */
+  const char *driver = di->driver_name;
+
+  if (!strcmp (driver, "net_i40e") || !strcmp (driver, "net_ice"))
+    {
+      /* x710 and E810 use 52-byte key */
+      xd->rss_key = vec_new (u8, 52);
+      clib_memcpy (xd->rss_key, intel_rss_key_52, 52);
+      xd->rss_key_len = 52;
+    }
+  else
+    {
+      /* i210, i350, 82599 use 40-byte key */
+      xd->rss_key = vec_new (u8, 40);
+      clib_memcpy (xd->rss_key, intel_rss_key_40, 40);
+      xd->rss_key_len = 40;
+    }
+
+  /* Set symmetric Toeplitz hash function */
+  xd->rss_hash_func = RTE_ETH_HASH_FUNCTION_SYMMETRIC_TOEPLITZ;
+
+  dpdk_log_debug ("[%u] Configured symmetric RSS (key_len=%u) for %s",
+		  xd->port_id, xd->rss_key_len, driver);
 }
 
 static clib_error_t *
@@ -602,6 +679,10 @@ dpdk_lib_init (dpdk_main_t * dm)
 	xd->conf.enable_rxq_int = 0;
 
       dpdk_device_setup (xd);
+
+      /* Setup symmetric RSS key for Intel NICs */
+      if (xd->conf.n_rx_queues > 1 && xd->conf.disable_rss == 0)
+	dpdk_setup_symmetric_rss_key (xd, &di);
 
       /* rss queues should be configured after dpdk_device_setup() */
       if (devconf->rss_queues)

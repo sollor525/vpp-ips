@@ -15,6 +15,7 @@
 #include "ips_session.h"
 #include "ips_session_timer.h"
 #include "../acl/ips_acl.h"
+#include "../ips.h"
 
 
 /* 全局会话管理器实例 */
@@ -385,18 +386,8 @@ ips_session_lookup_or_create_ipv4 (u32 thread_index,
         session = pool_elt_at_index (ptd->session_pool, kv.value);
         session->last_packet_time = now;
 
-        /* Check ACL rules for existing session */
-        if (!(session->flags & IPS_SESSION_FLAG_BLOCKED))
-        {
-            /* Only check ACL if session is not already blocked */
-            ips_session_check_acl(thread_index, session, ip4, NULL, tcp);
-        }
-
-        /* If session is blocked (either previously or just now), don't allow processing */
-        if (session->flags & IPS_SESSION_FLAG_BLOCKED)
-        {
-            return NULL;
-        }
+        /* 反向查找只更新会话状态，不做 ACL 检查 */
+        /* ACL 检查在 ips_tcp_acl_node 中完成 */
 
         /* 反向=服务器->客户端 */
         u8 tcp_flags = tcp->flags;
@@ -518,10 +509,24 @@ create_new_session:
     /* 设置会话信息 */
     session->is_ipv6 = 0;
     session->protocol = ip4->protocol;
-    session->src_ip4 = ip4->src_address;
-    session->dst_ip4 = ip4->dst_address;
-    session->src_port = tcp->src_port;
-    session->dst_port = tcp->dst_port;
+
+    /* 关键修改：SYN-ACK 包创建会话时，交换 src/dst 以统一会话方向 */
+    if ((tcp->flags & (TCP_FLAG_SYN | TCP_FLAG_ACK)) == (TCP_FLAG_SYN | TCP_FLAG_ACK))
+    {
+        /* SYN-ACK：会话 src = 报文 dst（客户端），会话 dst = 报文 src（服务器） */
+        session->src_ip4 = ip4->dst_address;
+        session->dst_ip4 = ip4->src_address;
+        session->src_port = tcp->dst_port;
+        session->dst_port = tcp->src_port;
+    }
+    else
+    {
+        /* SYN：会话方向 = 报文方向（客户端→服务器） */
+        session->src_ip4 = ip4->src_address;
+        session->dst_ip4 = ip4->dst_address;
+        session->src_port = tcp->src_port;
+        session->dst_port = tcp->dst_port;
+    }
 
     /* 设置时间信息 */
     session->session_start_time = now;
@@ -571,6 +576,7 @@ create_new_session:
 
     /* 更新统计 */
     ptd->total_sessions_created++;
+    vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_SESSIONS_CREATED, 1);
 
     return session;
 }
@@ -722,18 +728,8 @@ ips_session_lookup_or_create_ipv6 (u32 thread_index,
         session = pool_elt_at_index (ptd->session_pool, kv.value);
         session->last_packet_time = now;
 
-        /* Check ACL rules for existing session */
-        if (!(session->flags & IPS_SESSION_FLAG_BLOCKED))
-        {
-            /* Only check ACL if session is not already blocked */
-            ips_session_check_acl(thread_index, session, NULL, ip6, tcp);
-        }
-
-        /* If session is blocked (either previously or just now), don't allow processing */
-        if (session->flags & IPS_SESSION_FLAG_BLOCKED)
-        {
-            return NULL;
-        }
+        /* 反向查找只更新会话状态，不做 ACL 检查 */
+        /* ACL 检查在 ips_tcp_acl_node 中完成 */
 
         /* 反向=服务器->客户端 */
         u8 tcp_flags = tcp->flags;
@@ -855,10 +851,24 @@ create_new_session_v6:
     /* 设置会话信息 */
     session->is_ipv6 = 1;
     session->protocol = ip6->protocol;
-    session->src_ip6 = ip6->src_address;
-    session->dst_ip6 = ip6->dst_address;
-    session->src_port = tcp->src_port;
-    session->dst_port = tcp->dst_port;
+
+    /* 关键修改：SYN-ACK 包创建会话时，交换 src/dst 以统一会话方向 */
+    if ((tcp->flags & (TCP_FLAG_SYN | TCP_FLAG_ACK)) == (TCP_FLAG_SYN | TCP_FLAG_ACK))
+    {
+        /* SYN-ACK：会话 src = 报文 dst（客户端），会话 dst = 报文 src（服务器） */
+        session->src_ip6 = ip6->dst_address;
+        session->dst_ip6 = ip6->src_address;
+        session->src_port = tcp->dst_port;
+        session->dst_port = tcp->src_port;
+    }
+    else
+    {
+        /* SYN：会话方向 = 报文方向（客户端→服务器） */
+        session->src_ip6 = ip6->src_address;
+        session->dst_ip6 = ip6->dst_address;
+        session->src_port = tcp->src_port;
+        session->dst_port = tcp->dst_port;
+    }
 
     /* 设置时间信息 */
     session->session_start_time = now;
@@ -908,6 +918,7 @@ create_new_session_v6:
 
     /* 更新统计 */
     ptd->total_sessions_created++;
+    vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_SESSIONS_CREATED, 1);
 
     return session;
 }

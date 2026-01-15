@@ -60,9 +60,9 @@ ips_block_node_fn (vlib_main_t * vm,
         u32 thread_index = vm->thread_index;
 
         /* Increment basic packet counters */
-        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PACKETS_RECEIVED, 1);
-        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_BYTES_RECEIVED, b0->current_length);
-        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_BLOCKS_SENT, 1);
+        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_BLOCK_PACKETS_IN, 1);
+        /* Note: Bytes counted in input node */
+        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_BLOCK_SENT, 1);
 
         /* Get packet headers - buffer current pointer is at IP header (not Ethernet) */
         ip4_header_t *ip4h = NULL;
@@ -131,7 +131,7 @@ ips_block_node_fn (vlib_main_t * vm,
                                         0, /* is_reply */
                                         IPS_BLOCK_REASON_ACL) == 0)
             {
-                vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_TCP_RESETS_SENT, 1);
+                vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_BLOCK_TCP_RESETS_SENT, 1);
             }
             else
             {
@@ -141,7 +141,7 @@ ips_block_node_fn (vlib_main_t * vm,
         else
         {
             /* Not a TCP packet, just drop */
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_NON_TCP_DROPPED, 1);
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_BLOCK_NON_TCP_DROPPED, 1);
         }
 
         /* Always drop the original packet after processing */

@@ -305,44 +305,37 @@ ips_inspect_node_fn (vlib_main_t *vm,
 
     /* Increment counters for the entire frame */
     if (frame->n_vectors > 0) {
-        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PACKETS_RECEIVED,
+        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_INSPECT_PACKETS_IN,
                                       frame->n_vectors);
 
-        /* Calculate total bytes - use original frame pointer */
-        u32 *original_from = vlib_frame_vector_args (frame);
-        if (frame->n_vectors > 0) {
-            u32 first_bi = original_from[0];
-            vlib_buffer_t *first_b = vlib_get_buffer(vm, first_bi);
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_BYTES_RECEIVED,
-                                          first_b->current_length * frame->n_vectors);
-        }
+        /* Note: Bytes are counted in input node - not counted here */
 
-        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_INSPECTION_PROCESSED,
+        vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_INSPECT_PROCESSED,
                                       frame->n_vectors);
 
         /* Increment inspection-specific counters */
         if (inspection_performed_count > 0) {
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_INSPECTION_PERFORMED,
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_INSPECT_PERFORMED,
                                           inspection_performed_count);
         }
         if (rule_matches_count > 0) {
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_RULE_MATCHES,
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_INSPECT_RULE_MATCHES,
                                           rule_matches_count);
         }
         if (rules_triggered_count > 0) {
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_RULES_TRIGGERED,
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_INSPECT_RULES_TRIGGERED,
                                           rules_triggered_count);
         }
         if (alerts_generated_count > 0) {
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_ALERTS_GENERATED,
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_INSPECT_ALERTS_GENERATED,
                                           alerts_generated_count);
         }
         if (packets_dropped_count > 0) {
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PACKETS_DROPPED,
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_INSPECT_PACKETS_DROPPED,
                                           packets_dropped_count);
         }
         if (packets_passed_count > 0) {
-            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_PACKETS_PASSED,
+            vlib_increment_simple_counter(&ips_main.counters, thread_index, IPS_COUNTER_INSPECT_PACKETS_PASSED,
                                           packets_passed_count);
         }
         if (sessions_not_found_count > 0) {

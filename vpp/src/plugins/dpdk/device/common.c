@@ -154,6 +154,17 @@ dpdk_device_setup (dpdk_device_t * xd)
 	{
 	  conf.rxmode.mq_mode = RTE_ETH_MQ_RX_RSS;
 	  conf.rx_adv_conf.rss_conf.rss_hf = xd->conf.rss_hf;
+
+	  /* Apply symmetric RSS key if configured */
+	  if (xd->rss_key)
+	    {
+	      conf.rx_adv_conf.rss_conf.rss_key = xd->rss_key;
+	      conf.rx_adv_conf.rss_conf.rss_key_len = xd->rss_key_len;
+	      conf.rx_adv_conf.rss_conf.algorithm = xd->rss_hash_func;
+
+	      dpdk_log_debug ("[%u] Applying symmetric RSS: key_len=%u, algorithm=%d",
+			      xd->port_id, xd->rss_key_len, xd->rss_hash_func);
+	    }
 	}
     }
 

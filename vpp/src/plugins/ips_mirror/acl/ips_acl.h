@@ -201,6 +201,18 @@ typedef struct
     acl_plugin_methods_t acl_methods;
     u8 acl_plugin_loaded;              /* ACL plugin loaded flag */
 
+    /* Main ACL containers (4 dedicated ACLs for IP version × action type) */
+    u32 ipv4_whitelist_acl_index;      /* IPv4 whitelist ACL (permit) */
+    u32 ipv4_blacklist_acl_index;      /* IPv4 blacklist ACL (deny/reset/log) */
+    u32 ipv6_whitelist_acl_index;      /* IPv6 whitelist ACL (permit) */
+    u32 ipv6_blacklist_acl_index;      /* IPv6 blacklist ACL (deny/reset/log) */
+
+    /* Rule count for each main ACL */
+    u32 ipv4_whitelist_rule_count;
+    u32 ipv4_blacklist_rule_count;
+    u32 ipv6_whitelist_rule_count;
+    u32 ipv6_blacklist_rule_count;
+
     /* ACL contexts per thread */
     ips_acl_context_t *per_thread_contexts;
     u32 num_threads;
@@ -208,6 +220,9 @@ typedef struct
     /* IPS-specific ACL rules */
     ips_acl_rule_t *ips_rules;
     u32 next_rule_id;
+
+    /* Rule ID hash table for fast lookup (use 16_8 for u32 key) */
+    clib_bihash_16_8_t rule_id_hash;
 
     /* Statistics per thread */
     ips_acl_stats_t *per_thread_stats;

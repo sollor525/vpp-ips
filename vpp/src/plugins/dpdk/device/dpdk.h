@@ -225,6 +225,11 @@ typedef struct
    * deducted from device info */
   u8 driver_frame_overhead;
 
+  /* RSS symmetric key configuration */
+  u8 *rss_key;                         /* RSS hash key pointer */
+  u8 rss_key_len;                      /* RSS hash key length (40 or 52) */
+  enum rte_eth_hash_function rss_hash_func; /* Hash algorithm */
+
   /* error string */
   clib_error_t *errors;
   dpdk_port_conf_t conf;
